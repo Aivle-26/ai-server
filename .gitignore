@@ -1,4 +1,29 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python bytecode and virtual environments
 __pycache__/
 *.py[cod]
+*.pyo
 .venv/
-.env
+venv/
+env/
+
+# Test, coverage, and static-analysis output
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local runtime output
+*.log
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
