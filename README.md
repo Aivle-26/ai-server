@@ -29,6 +29,40 @@ API 키가 없거나 LLM 호출에 실패하면 규칙 기반 결과를 반환�
 - `files`: PDF, HWP, HWPX, DOCX, TXT, MD, CSV 문서, 최대 10개
 - 파일당 최대 크기: 20MB
 
+요구사항 후보의 `category`는 LLM이 아래 값 중 하나로 분류합니다. LLM 호출이 실패한 경우에도
+동일한 값 체계로 규칙 기반 분류를 수행합니다.
+
+- `FUNCTIONAL`: 기능 요구사항
+- `NON_FUNCTIONAL`: 성능·품질 등 비기능 요구사항
+- `SECURITY`: 보안·개인정보 요구사항
+- `DATA`: 데이터 요구사항
+- `INTERFACE`: 외부 시스템·API 연계 요구사항
+- `OPERATION`: 운영·유지보수 요구사항
+- `PROJECT_MANAGEMENT`: 일정·산출물·교육·보고 등 사업관리 요구사항
+- `UNSPECIFIED`: 분류가 불명확하거나 기타인 요구사항
+
+프로젝트 산출물은 `project_info.required_artifacts`에 객체 목록으로 반환합니다. 문서에 버전이
+명시되지 않은 경우 `required_version`은 `1.0`입니다.
+
+```json
+{
+  "required_artifacts": [
+    {
+      "artifact_type": "REQUIREMENTS_DEFINITION",
+      "artifact_name": "요구사항 정의서",
+      "required_version": "1.0"
+    }
+  ]
+}
+```
+
+허용되는 `artifact_type`은 `RFP`, `PROPOSAL`, `REQUIREMENTS_DEFINITION`,
+`FUNCTION_SPECIFICATION`, `WBS`, `ERD`, `MEETING_MINUTES`, `TEST_RESULTS`,
+`WEEKLY_REPORT`, `FINAL_REPORT`, `UI_DESIGN`입니다.
+
+`acceptance_conditions`, `budget_contract_conditions`, `security_privacy_conditions`는
+원문의 의미를 유지하되 `기능 테스트 통과`, `개인정보 암호화` 같은 짧은 명사형 목록으로 반환합니다.
+
 ```powershell
 curl.exe -X POST "http://localhost:8000/api/v1/planning/documents/extract" `
   -F "files=@sample-rfp.pdf"

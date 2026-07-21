@@ -21,6 +21,19 @@ MAX_TOTAL_CHARACTERS = 200_000
 CHUNK_SIZE = 12_000
 MIN_PDF_TEXT_CHARACTERS = 100
 MIN_PDF_CHARACTERS_PER_PAGE = 20
+ARTIFACT_DEFINITIONS = (
+    ("REQUIREMENTS_DEFINITION", "요구사항 정의서", ("요구사항 정의서", "요구사항정의서")),
+    ("FUNCTION_SPECIFICATION", "기능 명세서", ("기능 명세서", "기능명세서")),
+    ("MEETING_MINUTES", "회의록", ("회의록", "회의 기록")),
+    ("TEST_RESULTS", "테스트 결과서", ("테스트 결과서", "테스트결과서", "시험 결과서")),
+    ("WEEKLY_REPORT", "주간 보고서", ("주간 보고서", "주간보고서", "주간 보고")),
+    ("FINAL_REPORT", "최종 보고서", ("최종 보고서", "최종보고서", "완료 보고서")),
+    ("UI_DESIGN", "UI 설계서", ("ui 설계서", "화면 설계서", "화면설계서")),
+    ("PROPOSAL", "제안서", ("제안서",)),
+    ("RFP", "RFP", ("rfp", "제안요청서", "제안 요청서")),
+    ("WBS", "WBS", ("wbs", "작업분해구조", "작업 분해 구조")),
+    ("ERD", "ERD", ("erd", "개체관계도", "개체 관계도")),
+)
 
 
 class DocumentExtractionError(ValueError):
@@ -81,10 +94,14 @@ class PlanningDocumentService:
             "period_start": None,
             "period_end": None,
             "key_features": self._list_value(text, ("주요 기능", "구축 범위")),
-            "deliverables": self._list_value(text, ("주요 산출물", "산출물")),
-            "acceptance_conditions": self._list_value(text, ("검수 조건", "검수 기준")),
-            "budget_contract_conditions": self._list_value(text, ("예산/계약 조건", "사업비", "계약 조건")),
-            "security_privacy_conditions": self._list_value(
+            "required_artifacts": self._artifact_list(text, ("주요 산출물", "산출물")),
+            "acceptance_conditions": self._condition_list_value(
+                text, ("검수 조건", "검수 기준")
+            ),
+            "budget_contract_conditions": self._condition_list_value(
+                text, ("예산/계약 조건", "사업비", "계약 조건")
+            ),
+            "security_privacy_conditions": self._condition_list_value(
                 text, ("보안/개인정보 조건", "보안 조건", "개인정보 조건")
             ),
         }
@@ -105,6 +122,7 @@ class PlanningDocumentService:
             requirements.append({
                 "function_name": self._function_name(cleaned),
                 "requirement_text": cleaned[:1000],
+                "category": self._category(cleaned),
                 "priority": self._priority(line),
                 "acceptance_criteria": None,
                 "due_date": None,
@@ -120,11 +138,17 @@ class PlanningDocumentService:
             "project_name", "project_goal", "client_organization", "period_start", "period_end"
         )
         list_fields = (
-            "key_features", "deliverables", "acceptance_conditions",
+            "key_features", "acceptance_conditions",
             "budget_contract_conditions", "security_privacy_conditions",
         )
+        condition_fields = {
+            "acceptance_conditions",
+            "budget_contract_conditions",
+            "security_privacy_conditions",
+        }
         project_info: dict[str, Any] = {field: None for field in scalar_fields}
         project_info.update({field: [] for field in list_fields})
+        project_info["required_artifacts"] = []
 
         for partial in partials:
             source = partial.get("project_info") or {}
@@ -133,9 +157,32 @@ class PlanningDocumentService:
                     project_info[field] = source[field]
             for field in list_fields:
                 for value in source.get(field) or []:
-                    value = str(value).strip()
+                    value = (
+                        self._normalize_condition(value)
+                        if field in condition_fields
+                        else str(value).strip()
+                    )
                     if value and value not in project_info[field]:
                         project_info[field].append(value)
+            for artifact in source.get("required_artifacts") or []:
+                if hasattr(artifact, "model_dump"):
+                    artifact = artifact.model_dump(mode="json")
+                if not isinstance(artifact, dict):
+                    continue
+                artifact_type = str(artifact.get("artifact_type") or "").strip()
+                artifact_name = str(artifact.get("artifact_name") or "").strip()
+                if not artifact_type or not artifact_name:
+                    continue
+                if any(
+                    existing["artifact_type"] == artifact_type
+                    for existing in project_info["required_artifacts"]
+                ):
+                    continue
+                project_info["required_artifacts"].append({
+                    "artifact_type": artifact_type,
+                    "artifact_name": artifact_name,
+                    "required_version": str(artifact.get("required_version") or "1.0").strip(),
+                })
 
         requirements = []
         seen = set()
@@ -152,6 +199,7 @@ class PlanningDocumentService:
                     "requirement_id": f"REQ-{len(requirements) + 1:03d}",
                     "function_name": requirement.get("function_name") or "공통",
                     "requirement_text": text,
+                    "category": requirement.get("category") or "UNSPECIFIED",
                     "priority": requirement.get("priority") or "UNSPECIFIED",
                     "acceptance_criteria": requirement.get("acceptance_criteria"),
                     "due_date": requirement.get("due_date"),
@@ -329,6 +377,54 @@ class PlanningDocumentService:
             return []
         return [item.strip() for item in re.split(r"[,;/·]", value) if item.strip()]
 
+    def _condition_list_value(self, text: str, labels: tuple[str, ...]) -> list[str]:
+        return [
+            normalized
+            for item in self._list_value(text, labels)
+            if (normalized := self._normalize_condition(item))
+        ]
+
+    def _normalize_condition(self, value: Any) -> str:
+        normalized = re.sub(r"\s+", " ", str(value)).strip(" \t-•.;。")
+        normalized = re.sub(
+            r"(\S+)(?:을|를)\s+제출한\s+후",
+            r"\1 제출 후",
+            normalized,
+        )
+        normalized = re.sub(
+            r"(?:하여야|해야|되어야|돼야|이어야)\s*(?:한다|함)$",
+            "",
+            normalized,
+        ).strip()
+        normalized = re.sub(r"(?:으로|로)\s*한다$", "", normalized).strip()
+        normalized = re.sub(r"한다$", "", normalized).strip()
+        normalized = re.sub(
+            r"(\S+)(?:을|를)\s+"
+            r"(적용|수행|제출|지급|암호화|검수|확인|점검|통과|준수|제공|처리|관리|보관|삭제|제한|분리|구축|실시)$",
+            r"\1 \2",
+            normalized,
+        )
+        normalized = re.sub(r"^(총\s*사업비|사업비)(?:은|는)\s+", r"\1 ", normalized)
+        return normalized.strip(" \t-•.;。")
+
+    def _artifact_list(self, text: str, labels: tuple[str, ...]) -> list[dict[str, str]]:
+        artifacts = []
+        seen_types = set()
+        for item in self._list_value(text, labels):
+            lowered = item.lower()
+            for artifact_type, artifact_name, keywords in ARTIFACT_DEFINITIONS:
+                if artifact_type in seen_types:
+                    continue
+                if any(keyword in lowered for keyword in keywords):
+                    artifacts.append({
+                        "artifact_type": artifact_type,
+                        "artifact_name": artifact_name,
+                        "required_version": "1.0",
+                    })
+                    seen_types.add(artifact_type)
+                    break
+        return artifacts
+
     def _meaningful_lines(self, text: str) -> list[str]:
         return [line.strip(" \t-•") for line in text.splitlines() if len(line.strip()) >= 8]
 
@@ -355,6 +451,41 @@ class PlanningDocumentService:
             return "MEDIUM"
         if any(value in lowered for value in ("선택", "low", "낮음")) or self._has_priority_grade(text, "하"):
             return "LOW"
+        return "UNSPECIFIED"
+
+    def _category(self, text: str) -> str:
+        lowered = text.lower()
+        category_keywords = (
+            ("SECURITY", (
+                "보안", "개인정보", "암호화", "접근권한", "접근 권한", "인증", "인가",
+                "취약점", "침해", "security", "privacy",
+            )),
+            ("INTERFACE", (
+                "외부 시스템", "외부시스템", "인터페이스", "연계", "api", "webhook",
+                "integration",
+            )),
+            ("DATA", (
+                "데이터", "데이터베이스", "database", "db ", "저장", "이관", "마이그레이션",
+                "정합성", "데이터 품질",
+            )),
+            ("NON_FUNCTIONAL", (
+                "성능", "응답시간", "응답 시간", "처리량", "동시접속", "동시 접속", "가용성",
+                "확장성", "호환성", "사용성", "품질", "performance", "availability",
+            )),
+            ("OPERATION", (
+                "운영", "유지보수", "유지 보수", "모니터링", "배포", "장애 대응", "장애대응",
+                "헬프데스크", "관제", "백업", "복구",
+            )),
+            ("PROJECT_MANAGEMENT", (
+                "일정", "산출물", "교육", "주간 보고", "월간 보고", "진행 보고", "보고서 제출",
+                "검수", "회의", "사업관리", "사업 관리", "수행 인력", "프로젝트 관리",
+            )),
+        )
+        for category, keywords in category_keywords:
+            if any(keyword in lowered for keyword in keywords):
+                return category
+        if self._looks_like_requirement(text):
+            return "FUNCTIONAL"
         return "UNSPECIFIED"
 
     def _has_priority_grade(self, text: str, grade: str) -> bool:
