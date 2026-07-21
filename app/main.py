@@ -18,7 +18,7 @@ from app.services.planning_document_service import (
 
 
 app = FastAPI(
-    title="AI Project Management Server",
+    title="AI 프로젝트 관리 서버",
     version="0.1.0",
 )
 
@@ -34,7 +34,8 @@ def health() -> dict[str, str]:
 @app.post(
     "/api/v1/risk/communication/analyze",
     response_model=CommunicationRiskResponse,
-    summary="Analyze project Slack communication risk",
+    summary="프로젝트 커뮤니케이션 위험 분석",
+    description="프로젝트의 Slack 메시지를 분석하여 커뮤니케이션 위험도와 판단 근거를 반환합니다.",
 )
 def analyze_communication_risk(
     request: CommunicationRiskRequest,
@@ -48,7 +49,11 @@ def analyze_communication_risk(
 @app.post(
     "/api/v1/planning/documents/extract",
     response_model=PlanningDocumentExtractionResponse,
-    summary="Extract project information and requirement candidates from planning documents",
+    summary="프로젝트 초기 문서 정보 및 요구사항 추출",
+    description=(
+        "기획서, 제안서, RFP 등 프로젝트 초기 문서에서 기본정보, 필수 산출물과 "
+        "요구사항 후보를 추출합니다."
+    ),
 )
 async def extract_planning_documents(
     files: list[UploadFile] = File(
