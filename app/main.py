@@ -4,11 +4,13 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from app.agents.communication_risk_graph import CommunicationRiskGraph
 from app.agents.planning_document_graph import PlanningDocumentGraph
+from app.agents.report_graph import ReportGraph
 from app.schemas.communication_risk import (
     CommunicationRiskRequest,
     CommunicationRiskResponse,
 )
 from app.schemas.planning_document import PlanningDocumentExtractionResponse
+from app.schemas.report import MeetingAnalysisRequest, MeetingAnalysisResponse
 from app.services.planning_document_service import (
     DocumentExtractionError,
     MAX_FILE_COUNT,
@@ -24,7 +26,7 @@ app = FastAPI(
 
 communication_risk_graph = CommunicationRiskGraph()
 planning_document_graph = PlanningDocumentGraph()
-
+report_graph = ReportGraph()
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -80,3 +82,17 @@ async def extract_planning_documents(
         return planning_document_graph.invoke(uploads)
     except DocumentExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+@app.post(
+    "/api/v1/reports/meeting/analyze",
+    response_model=MeetingAnalysisResponse,
+    summary="회의록 기반 보고 데이터 추출",
+    description=(
+        "회의록을 분석하여 회의 요약, 결정 로그, 액션 아이템, "
+        "이슈 리스크 변경 후보를 추출합니다."
+    ),
+)
+def analyze_meeting_report(
+    request: MeetingAnalysisRequest,
+) -> MeetingAnalysisResponse:
+    return report_graph.invoke(request)
