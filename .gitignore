@@ -22,6 +22,9 @@ htmlcov/
 # Local runtime output
 *.log
 
+# Local project decision notes
+LOCAL_DECISIONS.md
+
 # Editor and operating-system files
 .vscode/
 .idea/

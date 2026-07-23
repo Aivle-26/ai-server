@@ -4,16 +4,22 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from app.agents.communication_risk_graph import CommunicationRiskGraph
 from app.agents.planning_document_graph import PlanningDocumentGraph
+from app.agents.planning_wbs_graph import PlanningWBSGraph
 from app.schemas.communication_risk import (
     CommunicationRiskRequest,
     CommunicationRiskResponse,
 )
 from app.schemas.planning_document import PlanningDocumentExtractionResponse
+from app.schemas.planning_wbs import WBSGenerationRequest, WBSGenerationResponse
 from app.services.planning_document_service import (
     DocumentExtractionError,
     MAX_FILE_COUNT,
     MAX_FILE_SIZE,
     UploadedDocument,
+)
+from app.services.planning_wbs_llm_service import (
+    WBSLLMConfigurationError,
+    WBSLLMGenerationError,
 )
 
 
@@ -24,6 +30,7 @@ app = FastAPI(
 
 communication_risk_graph = CommunicationRiskGraph()
 planning_document_graph = PlanningDocumentGraph()
+planning_wbs_graph = PlanningWBSGraph()
 
 
 @app.get("/health")
@@ -80,3 +87,21 @@ async def extract_planning_documents(
         return planning_document_graph.invoke(uploads)
     except DocumentExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/v1/planning/wbs/generate",
+    response_model=WBSGenerationResponse,
+    summary="프로젝트 WBS 작업분해구조 생성",
+    description=(
+        "프로젝트 기본정보와 요구사항을 바탕으로 일정·담당자를 제외한 "
+        "PHASE, WORK_PACKAGE, TASK 3단계 WBS를 생성합니다."
+    ),
+)
+def generate_planning_wbs(request: WBSGenerationRequest) -> dict:
+    try:
+        return planning_wbs_graph.invoke(request)
+    except WBSLLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except WBSLLMGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
