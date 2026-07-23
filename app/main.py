@@ -10,7 +10,16 @@ from app.schemas.communication_risk import (
     CommunicationRiskResponse,
 )
 from app.schemas.planning_document import PlanningDocumentExtractionResponse
-from app.schemas.report import MeetingAnalysisRequest, MeetingAnalysisResponse
+from app.schemas.report import (
+    DeliverableRagRequest,
+    DeliverableRagResponse,
+    FinalReportRequest,
+    FinalReportResponse,
+    MeetingAnalysisRequest,
+    MeetingAnalysisResponse,
+    WeeklyReportRequest,
+    WeeklyReportResponse,
+)
 from app.services.planning_document_service import (
     DocumentExtractionError,
     MAX_FILE_COUNT,
@@ -27,6 +36,7 @@ app = FastAPI(
 communication_risk_graph = CommunicationRiskGraph()
 planning_document_graph = PlanningDocumentGraph()
 report_graph = ReportGraph()
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -67,21 +77,33 @@ async def extract_planning_documents(
     ),
 ) -> dict:
     if len(files) > MAX_FILE_COUNT:
-        raise HTTPException(status_code=422, detail=f"문서는 최대 {MAX_FILE_COUNT}개까지 업로드할 수 있습니다.")
+        raise HTTPException(
+            status_code=422,
+            detail=f"문서는 최대 {MAX_FILE_COUNT}개까지 업로드할 수 있습니다.",
+        )
+
     uploads = []
     for file in files:
         content = await file.read(MAX_FILE_SIZE + 1)
         if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=413, detail=f"파일 크기는 20MB를 초과할 수 없습니다: {file.filename}")
-        uploads.append(UploadedDocument(
-            file_name=file.filename or "unnamed",
-            content_type=file.content_type,
-            content=content,
-        ))
+            raise HTTPException(
+                status_code=413,
+                detail=f"파일 크기는 20MB를 초과할 수 없습니다: {file.filename}",
+            )
+
+        uploads.append(
+            UploadedDocument(
+                file_name=file.filename or "unnamed",
+                content_type=file.content_type,
+                content=content,
+            )
+        )
+
     try:
         return planning_document_graph.invoke(uploads)
     except DocumentExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
 
 @app.post(
     "/api/v1/reports/meeting/analyze",
@@ -95,4 +117,49 @@ async def extract_planning_documents(
 def analyze_meeting_report(
     request: MeetingAnalysisRequest,
 ) -> MeetingAnalysisResponse:
-    return report_graph.invoke(request)
+    return report_graph.analyze_meeting(request)
+
+
+@app.post(
+    "/api/v1/reports/weekly/generate",
+    response_model=WeeklyReportResponse,
+    summary="주간 스크럼 및 보고서 자동 생성",
+    description=(
+        "WBS 기준 일정, 완료된 액션 아이템, 진행 중 업무, 리스크 정보를 바탕으로 "
+        "주간 보고서 초안을 생성합니다."
+    ),
+)
+def generate_weekly_report(
+    request: WeeklyReportRequest,
+) -> WeeklyReportResponse:
+    return report_graph.generate_weekly_report(request)
+
+
+@app.post(
+    "/api/v1/reports/final/generate",
+    response_model=FinalReportResponse,
+    summary="최종 보고서 자동 생성",
+    description=(
+        "승인된 보고서와 이행 결과, 산출물 정보를 바탕으로 "
+        "프로젝트 최종 보고서 초안을 생성합니다."
+    ),
+)
+def generate_final_report(
+    request: FinalReportRequest,
+) -> FinalReportResponse:
+    return report_graph.generate_final_report(request)
+
+
+@app.post(
+    "/api/v1/reports/deliverables/rag/query",
+    response_model=DeliverableRagResponse,
+    summary="산출물 기반 RAG 챗봇 질의응답",
+    description=(
+        "요구사항 정의서, 회의록, 보고서, 산출물 등 프로젝트 문서를 근거로 "
+        "사용자 질문에 답변합니다."
+    ),
+)
+def query_deliverable_rag(
+    request: DeliverableRagRequest,
+) -> DeliverableRagResponse:
+    return report_graph.query_deliverable_rag(request)

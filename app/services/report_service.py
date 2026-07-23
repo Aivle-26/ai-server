@@ -1,158 +1,171 @@
-"""Pure analysis services used by the AI workflows."""
-from datetime import date
-from typing import Any
+from datetime import datetime
 
 from app.schemas.report import (
-    ActionItemCandidate,
-    DecisionLogCandidate,
+    ActionItem,
+    DeliverableRagRequest,
+    DeliverableRagResponse,
+    FinalReportRequest,
+    FinalReportResponse,
     IssueRiskChangeCandidate,
     MeetingAnalysisRequest,
     MeetingAnalysisResponse,
-    SourceReference,
+    RagSource,
+    WeeklyReportRequest,
+    WeeklyReportResponse,
 )
+from app.services.report_llm_service import ReportLlmService
 
 
 class ReportService:
-    def build_meeting_response(
-        self,
-        request: MeetingAnalysisRequest,
-        llm_result: dict[str, Any],
-        llm_status: str,
-    ) -> MeetingAnalysisResponse:
-        decision_logs = self._build_decision_logs(
-            raw_items=llm_result.get("decision_logs", []),
-            document_id=request.meeting_document.document_id,
-            document_name=request.meeting_document.file_name,
-        )
+    def __init__(self) -> None:
+        self.llm_service = ReportLlmService()
 
-        action_items = self._build_action_items(
-            raw_items=llm_result.get("action_items", []),
-            document_id=request.meeting_document.document_id,
-            document_name=request.meeting_document.file_name,
-        )
+    def analyze_meeting(self, request: MeetingAnalysisRequest) -> MeetingAnalysisResponse:
+        if request.enable_llm:
+            llm_result = self.llm_service.analyze_meeting(request)
+            if llm_result:
+                return llm_result
 
-        issue_risk_changes = self._build_issue_risk_changes(
-            raw_items=llm_result.get("issue_risk_changes", []),
-            document_id=request.meeting_document.document_id,
-            document_name=request.meeting_document.file_name,
-        )
+        text = request.meeting_document.text
 
-        missing_owner_count = sum(1 for item in action_items if not item.owner)
-        missing_due_date_count = sum(1 for item in action_items if not item.due_date)
+        action_items: list[ActionItem] = []
+        if "김남효" in text:
+            action_items.append(ActionItem(action_item="Report Agent 관련 작업 수행", owner="김남효"))
+        if "정다영" in text:
+            action_items.append(ActionItem(action_item="백엔드 API 연결 확인", owner="정다영"))
+        if "확정" in text or "해야 한다" in text:
+            action_items.append(ActionItem(action_item="회의에서 언급된 후속 작업 확정", owner=None))
+
+        risks: list[IssueRiskChangeCandidate] = []
+        if "담당자" in text and ("없" in text or "정해지지" in text):
+            risks.append(IssueRiskChangeCandidate(
+                risk_title="담당자 미지정 작업",
+                risk_type="인력/역할 리스크",
+                risk_level="MEDIUM",
+                reason="회의록에 담당자가 정해지지 않은 작업이 언급되었습니다.",
+            ))
 
         return MeetingAnalysisResponse(
             project_id=request.project_id,
-            meeting_summary=llm_result.get("meeting_summary", ""),
-            decision_logs=decision_logs,
+            meeting_summary=text[:250],
+            decision_logs=[],
             action_items=action_items,
-            issue_risk_changes=issue_risk_changes,
-            missing_owner_count=missing_owner_count,
-            missing_due_date_count=missing_due_date_count,
-            llm_status=llm_status,
+            issue_risk_changes=risks,
+            missing_owner_count=sum(1 for item in action_items if not item.owner),
+            missing_due_date_count=sum(1 for item in action_items if not item.due_date),
+            risk_missing_owner_count=sum(
+                1 for risk in risks
+                if "담당자" in risk.reason or "담당자" in risk.risk_title
+            ),
+            risk_missing_link_count=sum(
+                1 for risk in risks
+                if not risk.related_issue_id
+                and not risk.related_requirement_id
+                and not risk.related_wbs_id
+            ),
+            generated_at=datetime.now(),
+            llm_status="FALLBACK",
         )
 
-    def _build_source(
-        self,
-        document_id: str | None,
-        document_name: str,
-        excerpt: str | None,
-    ) -> SourceReference:
-        return SourceReference(
-            document_id=document_id,
-            document_name=document_name,
-            page=None,
-            excerpt=excerpt,
+    def generate_weekly_report(self, request: WeeklyReportRequest) -> WeeklyReportResponse:
+        if request.enable_llm:
+            llm_result = self.llm_service.generate_weekly_report(request)
+            if llm_result:
+                return llm_result
+
+        completed = [task.task_name for task in request.wbs_tasks if task.status == "DONE"]
+        delayed = [
+            task.task_name
+            for task in request.wbs_tasks
+            if task.status != "DONE" and task.due_date and task.due_date < request.week_end
+        ]
+        risks = [risk.risk_title for risk in request.open_risks]
+
+        progress_avg = (
+            sum(task.progress_rate for task in request.wbs_tasks) / len(request.wbs_tasks)
+            if request.wbs_tasks
+            else 0
         )
 
-    def _build_decision_logs(
-        self,
-        raw_items: list[dict[str, Any]],
-        document_id: str | None,
-        document_name: str,
-    ) -> list[DecisionLogCandidate]:
-        results: list[DecisionLogCandidate] = []
+        draft = (
+            f"이번 주 프로젝트 평균 진행률은 {progress_avg:.1f}%입니다. "
+            f"완료 작업은 {len(completed)}건, 지연 작업은 {len(delayed)}건, "
+            f"관리 중인 리스크는 {len(risks)}건입니다."
+        )
 
-        for item in raw_items:
-            results.append(
-                DecisionLogCandidate(
-                    decision_title=item.get("decision_title", "제목 없음"),
-                    decision_detail=item.get("decision_detail", ""),
-                    related_requirement_id=item.get("related_requirement_id"),
-                    related_wbs_id=item.get("related_wbs_id"),
-                    owner=item.get("owner"),
-                    source=self._build_source(
-                        document_id=document_id,
-                        document_name=document_name,
-                        excerpt=item.get("source_excerpt"),
-                    ),
-                )
-            )
+        return WeeklyReportResponse(
+            project_id=request.project_id,
+            week_start=request.week_start,
+            week_end=request.week_end,
+            progress_summary=f"평균 진행률 {progress_avg:.1f}%",
+            completed_work=completed,
+            delayed_work=delayed,
+            risk_summary=risks,
+            next_week_plan=["지연 작업 재점검", "미완료 액션 아이템 담당자 확인"],
+            report_draft=draft,
+            generated_at=datetime.now(),
+            llm_status="FALLBACK",
+        )
 
-        return results
+    def generate_final_report(self, request: FinalReportRequest) -> FinalReportResponse:
+        if request.enable_llm:
+            llm_result = self.llm_service.generate_final_report(request)
+            if llm_result:
+                return llm_result
 
-    def _build_action_items(
-        self,
-        raw_items: list[dict[str, Any]],
-        document_id: str | None,
-        document_name: str,
-    ) -> list[ActionItemCandidate]:
-        results: list[ActionItemCandidate] = []
+        done_items = [item.item_name for item in request.execution_results if item.status == "DONE"]
+        incomplete_items = [item.item_name for item in request.execution_results if item.status != "DONE"]
+        remaining_risks = [risk.risk_title for risk in request.remaining_risks]
 
-        for item in raw_items:
-            due_date = self._parse_date(item.get("due_date"))
+        draft = (
+            f"프로젝트 최종 보고서 초안입니다. "
+            f"완료 항목 {len(done_items)}건, 미완료 항목 {len(incomplete_items)}건, "
+            f"잔여 리스크 {len(remaining_risks)}건이 확인되었습니다."
+        )
 
-            results.append(
-                ActionItemCandidate(
-                    action_item=item.get("action_item", "작업명 없음"),
-                    owner=item.get("owner"),
-                    due_date=due_date,
-                    status=item.get("status", "TODO"),
-                    related_requirement_id=item.get("related_requirement_id"),
-                    related_wbs_id=item.get("related_wbs_id"),
-                    source=self._build_source(
-                        document_id=document_id,
-                        document_name=document_name,
-                        excerpt=item.get("source_excerpt"),
-                    ),
-                )
-            )
+        return FinalReportResponse(
+            project_id=request.project_id,
+            final_summary=draft,
+            achievement_summary=done_items,
+            incomplete_items=incomplete_items,
+            remaining_risk_summary=remaining_risks,
+            final_report_draft=draft,
+            generated_at=datetime.now(),
+            llm_status="FALLBACK",
+        )
 
-        return results
+    def answer_deliverable_rag(self, request: DeliverableRagRequest) -> DeliverableRagResponse:
+        matched_sources: list[RagSource] = []
 
-    def _build_issue_risk_changes(
-        self,
-        raw_items: list[dict[str, Any]],
-        document_id: str | None,
-        document_name: str,
-    ) -> list[IssueRiskChangeCandidate]:
-        results: list[IssueRiskChangeCandidate] = []
+        question_keywords = [
+            word for word in request.question.replace("?", " ").replace(".", " ").split()
+            if len(word) >= 2
+        ]
 
-        for item in raw_items:
-            results.append(
-                IssueRiskChangeCandidate(
-                    risk_title=item.get("risk_title", "리스크 제목 없음"),
-                    risk_type=item.get("risk_type", "기타"),
-                    change_type=item.get("change_type", "NEW"),
-                    risk_level=item.get("risk_level", "MEDIUM"),
-                    reason=item.get("reason", ""),
-                    related_issue_id=item.get("related_issue_id"),
-                    related_requirement_id=item.get("related_requirement_id"),
-                    related_wbs_id=item.get("related_wbs_id"),
-                    source=self._build_source(
-                        document_id=document_id,
-                        document_name=document_name,
-                        excerpt=item.get("source_excerpt"),
-                    ),
-                )
-            )
+        for doc in request.deliverable_documents:
+            if any(keyword in doc.text for keyword in question_keywords):
+                matched_sources.append(RagSource(
+                    deliverable_id=doc.deliverable_id,
+                    document_id=doc.document_id,
+                    document_name=doc.document_name,
+                    page=doc.page,
+                    excerpt=doc.text[:300],
+                ))
 
-        return results
+        if request.enable_llm:
+            llm_result = self.llm_service.answer_deliverable_rag(request, matched_sources)
+            if llm_result:
+                return llm_result
 
-    def _parse_date(self, value: str | None) -> date | None:
-        if not value:
-            return None
+        if matched_sources:
+            answer = "관련 산출물 문서에서 질문과 연관된 내용을 찾았습니다. 근거 문서를 확인해 주세요."
+        else:
+            answer = "질문과 직접적으로 연결되는 산출물 근거를 찾지 못했습니다."
 
-        try:
-            return date.fromisoformat(value)
-        except ValueError:
-            return None
+        return DeliverableRagResponse(
+            project_id=request.project_id,
+            answer=answer,
+            sources=matched_sources,
+            generated_at=datetime.now(),
+            llm_status="FALLBACK",
+        )
