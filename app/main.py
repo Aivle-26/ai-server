@@ -4,12 +4,17 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from app.agents.communication_risk_graph import CommunicationRiskGraph
 from app.agents.planning_document_graph import PlanningDocumentGraph
+from app.agents.planning_schedule_graph import PlanningScheduleGraph
 from app.agents.planning_wbs_graph import PlanningWBSGraph
 from app.schemas.communication_risk import (
     CommunicationRiskRequest,
     CommunicationRiskResponse,
 )
 from app.schemas.planning_document import PlanningDocumentExtractionResponse
+from app.schemas.planning_schedule import (
+    PlanningScheduleRequest,
+    PlanningScheduleResponse,
+)
 from app.schemas.planning_wbs import WBSGenerationRequest, WBSGenerationResponse
 from app.services.planning_document_service import (
     DocumentExtractionError,
@@ -21,6 +26,10 @@ from app.services.planning_wbs_llm_service import (
     WBSLLMConfigurationError,
     WBSLLMGenerationError,
 )
+from app.services.planning_schedule_llm_service import (
+    ScheduleLLMConfigurationError,
+    ScheduleLLMGenerationError,
+)
 
 
 app = FastAPI(
@@ -31,6 +40,7 @@ app = FastAPI(
 communication_risk_graph = CommunicationRiskGraph()
 planning_document_graph = PlanningDocumentGraph()
 planning_wbs_graph = PlanningWBSGraph()
+planning_schedule_graph = PlanningScheduleGraph()
 
 
 @app.get("/health")
@@ -104,4 +114,22 @@ def generate_planning_wbs(request: WBSGenerationRequest) -> dict:
     except WBSLLMConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except WBSLLMGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/v1/planning/schedules/recommend",
+    response_model=PlanningScheduleResponse,
+    summary="WBS 기반 프로젝트 일정 추천",
+    description=(
+        "WBS 작업을 바탕으로 Monte Carlo 방식을 적용하여 각 WBS의 "
+        "예상·권장·보수적 시작일과 종료일을 반환합니다."
+    ),
+)
+def recommend_planning_schedule(request: PlanningScheduleRequest) -> dict:
+    try:
+        return planning_schedule_graph.invoke(request)
+    except ScheduleLLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ScheduleLLMGenerationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

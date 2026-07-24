@@ -1,0 +1,31 @@
+{
+  "project_id": 1,
+  "project_start_date": "2026-08-03",
+  "target_end_date": "2026-12-31",
+  "wbs_items": [
+    {
+      "wbs_id": 1,
+      "wbs_code": "1",
+      "parent_wbs_id": null,
+      "item_type": "PHASE",
+      "wbs_name": "요구사항 분석",
+      "description": "프로젝트 요구사항을 분석한다."
+    },
+    {
+      "wbs_id": 2,
+      "wbs_code": "1.1",
+      "parent_wbs_id": 1,
+      "item_type": "WORK_PACKAGE",
+      "wbs_name": "기능 요구사항 분석",
+      "description": "기능 요구사항을 상세화한다."
+    },
+    {
+      "wbs_id": 3,
+      "wbs_code": "1.1.1",
+      "parent_wbs_id": 2,
+      "item_type": "TASK",
+      "wbs_name": "대시보드 요구사항 상세화",
+      "description": "대시보드 조회 항목과 화면 동작을 정의한다."
+    }
+  ]
+}

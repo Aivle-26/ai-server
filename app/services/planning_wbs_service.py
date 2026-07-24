@@ -13,7 +13,7 @@ WBS_REQUIREMENT_BATCH_SIZE = 30
 @dataclass(frozen=True)
 class WBSBuildOutcome:
     result: dict[str, Any]
-    missing_requirement_ids: list[str]
+    missing_requirement_ids: list[int]
     missing_artifact_types: list[str]
     missing_phase_names: list[str]
 
@@ -31,7 +31,7 @@ class PlanningWBSService:
         self,
         request: WBSGenerationRequest,
         *,
-        target_requirement_ids: list[str] | None = None,
+        target_requirement_ids: list[int] | None = None,
         target_artifact_types: list[str] | None = None,
         target_phase_names: list[str] | None = None,
     ) -> list[dict[str, Any]]:
@@ -173,7 +173,7 @@ class PlanningWBSService:
                             "completion_criteria": [],
                         })
 
-                        proposed_requirement_ids = self._clean_list(
+                        proposed_requirement_ids = self._clean_ids(
                             task.get("mapped_requirement_ids") or []
                         )
                         invalid_requirement_ids = [
@@ -183,9 +183,9 @@ class PlanningWBSService:
                         if invalid_requirement_ids:
                             warnings.append(
                                 f"{task_name}에서 존재하지 않는 요구사항 ID가 제외되었습니다: "
-                                + ", ".join(invalid_requirement_ids)
+                                + ", ".join(map(str, invalid_requirement_ids))
                             )
-                        task_bucket["mapped_requirement_ids"] = self._merge_strings(
+                        task_bucket["mapped_requirement_ids"] = self._merge_ids(
                             task_bucket["mapped_requirement_ids"],
                             [
                                 item for item in proposed_requirement_ids
@@ -223,10 +223,10 @@ class PlanningWBSService:
         missing_phase_names = []
         sequence = 0
 
-        def next_wbs_id() -> str:
+        def next_wbs_id() -> int:
             nonlocal sequence
             sequence += 1
-            return f"WBS-{sequence:03d}"
+            return sequence
 
         for phase_index, stage in enumerate(request.methodology, start=1):
             phase_bucket = phase_by_key[self._key(stage)]
@@ -328,7 +328,7 @@ class PlanningWBSService:
         if missing_requirement_ids:
             warnings.append(
                 "WBS TASK에 연결되지 않은 요구사항이 있습니다: "
-                + ", ".join(missing_requirement_ids)
+                + ", ".join(map(str, missing_requirement_ids))
             )
         if missing_artifact_types:
             warnings.append(
@@ -369,7 +369,7 @@ class PlanningWBSService:
             missing_phase_names=missing_phase_names,
         )
 
-    def _task_values(self, packages: list[dict[str, Any]], field: str) -> list[str]:
+    def _task_values(self, packages: list[dict[str, Any]], field: str) -> list[Any]:
         values = []
         for package in packages:
             for task in package["tasks"].values():
@@ -379,7 +379,7 @@ class PlanningWBSService:
     def _artifact_objects(self, artifact_types: list[str], artifact_by_type: dict) -> list[dict]:
         return [artifact_by_type[item].model_dump(mode="json") for item in artifact_types]
 
-    def _ordered_requirements(self, values: Iterable[str], order: dict[str, int]) -> list[str]:
+    def _ordered_requirements(self, values: Iterable[int], order: dict[int, int]) -> list[int]:
         return sorted(set(values), key=lambda item: order[item])
 
     def _ordered_artifacts(self, values: Iterable[str], order: dict[str, int]) -> list[str]:
@@ -401,6 +401,22 @@ class PlanningWBSService:
 
     def _clean_list(self, values: Iterable[Any]) -> list[str]:
         return self._merge_strings([], values)
+
+    def _clean_ids(self, values: Iterable[Any]) -> list[int]:
+        return self._merge_ids([], values)
+
+    def _merge_ids(self, existing: list[int], new_values: Iterable[Any]) -> list[int]:
+        result = list(existing)
+        seen = set(result)
+        for value in new_values:
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0 and parsed not in seen:
+                result.append(parsed)
+                seen.add(parsed)
+        return result
 
     def _merge_strings(self, existing: list[str], new_values: Iterable[Any]) -> list[str]:
         result = list(existing)

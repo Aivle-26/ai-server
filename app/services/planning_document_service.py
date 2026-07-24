@@ -196,7 +196,7 @@ class PlanningDocumentService:
                     continue
                 seen.add(key)
                 requirements.append({
-                    "requirement_id": f"REQ-{len(requirements) + 1:03d}",
+                    "requirement_id": len(requirements) + 1,
                     "function_name": requirement.get("function_name") or "공통",
                     "requirement_text": text,
                     "category": requirement.get("category") or "UNSPECIFIED",

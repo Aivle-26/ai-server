@@ -24,7 +24,7 @@ def sample_request(methodology=None, requirement_count=2) -> WBSGenerationReques
     requirements = []
     for index in range(1, requirement_count + 1):
         requirements.append({
-            "requirement_id": f"REQ-{index:03d}",
+            "requirement_id": index,
             "function_name": "학습 현황 대시보드" if index == 1 else f"보안 기능 {index}",
             "requirement_text": (
                 "학생별 학습 현황을 조회할 수 있어야 한다."
@@ -100,7 +100,7 @@ def complete_plan():
             "요구사항 상세화",
             [task(
                 "프로젝트 요구사항 상세화",
-                ["REQ-001", "REQ-002"],
+                [1, 2],
                 ["REQUIREMENTS_DEFINITION"],
             )],
         ),
@@ -109,7 +109,7 @@ def complete_plan():
             "기능 구현",
             [task(
                 "대시보드 및 보안 기능 구현",
-                ["REQ-001", "REQ-002"],
+                [1, 2],
                 ["FUNCTION_SPECIFICATION"],
             )],
         ),
@@ -133,7 +133,7 @@ class RepairingFakeLLMService:
                 "기능 요구사항 분석",
                 [task(
                     "대시보드 요구사항 상세화",
-                    ["REQ-001"],
+                    [1],
                     ["REQUIREMENTS_DEFINITION"],
                 )],
             )])]
@@ -142,7 +142,7 @@ class RepairingFakeLLMService:
             "누락 기능 구현",
             [task(
                 "보안 기능 구현",
-                ["REQ-002"],
+                [2],
                 ["FUNCTION_SPECIFICATION"],
             )],
         )])]
@@ -155,7 +155,7 @@ class PartialFakeLLMService:
             "기능 요구사항 분석",
             [task(
                 "대시보드 요구사항 상세화",
-                ["REQ-001"],
+                [1],
                 ["REQUIREMENTS_DEFINITION"],
             )],
         )])]
@@ -188,10 +188,10 @@ class PlanningWBSGraphTest(unittest.TestCase):
             [item["wbs_code"] for item in result["wbs_items"]],
             ["1", "1.1", "1.1.1", "2", "2.1", "2.1.1"],
         )
-        self.assertEqual(result["wbs_items"][2]["parent_wbs_id"], "WBS-002")
+        self.assertEqual(result["wbs_items"][2]["parent_wbs_id"], 2)
         self.assertEqual(result["wbs_items"][0]["mapped_requirement_ids"], [
-            "REQ-001",
-            "REQ-002",
+            1,
+            2,
         ])
 
     def test_graph_repairs_missing_requirements_artifacts_and_phase_once(self):
@@ -204,7 +204,7 @@ class PlanningWBSGraphTest(unittest.TestCase):
         self.assertEqual(repair_context["target_phase_names"], ["개발"])
         self.assertEqual(
             [item["requirement_id"] for item in repair_context["requirements"]],
-            ["REQ-002"],
+            [2],
         )
         self.assertEqual(result["generation_status"], "SUCCEEDED")
 
@@ -215,7 +215,7 @@ class PlanningWBSGraphTest(unittest.TestCase):
 
         self.assertEqual(result["generation_status"], "PARTIAL")
         self.assertEqual(result["requirement_coverage"]["unmapped_requirement_ids"], [
-            "REQ-002"
+            2
         ])
         self.assertIn("개발 단계에 수행 가능한 TASK가 없습니다.", result["warnings"])
 

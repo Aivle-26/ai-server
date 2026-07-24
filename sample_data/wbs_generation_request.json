@@ -57,7 +57,7 @@
                      },
     "requirement_candidates":  [
                                    {
-                                       "requirement_id":  "REQ-001",
+                                       "requirement_id":  1,
                                        "function_name":  "프로젝트 초기 문서 등록",
                                        "requirement_text":  "PM은 RFP, 제안서, 기획서 및 계획서 등 프로젝트 초기 문서를 등록할 수 있어야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -70,7 +70,7 @@
                                        "source_excerpt":  "프로젝트 초기 문서 데이터에서 요구사항과 프로젝트 목표를 추출한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-002",
+                                       "requirement_id":  2,
                                        "function_name":  "프로젝트 목표 추출",
                                        "requirement_text":  "시스템은 프로젝트 초기 문서에서 프로젝트 목표를 추출해야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -83,7 +83,7 @@
                                        "source_excerpt":  "프로젝트 초기 문서 데이터에서 프로젝트 목표를 추출한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-003",
+                                       "requirement_id":  3,
                                        "function_name":  "프로젝트 요구사항 추출",
                                        "requirement_text":  "시스템은 프로젝트 초기 문서에서 기능, 비기능, 보안 요구사항 후보를 추출해야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -96,7 +96,7 @@
                                        "source_excerpt":  "프로젝트 초기 문서 데이터에서 요구사항을 추출한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-004",
+                                       "requirement_id":  4,
                                        "function_name":  "요구사항 검토 및 기준선 확정",
                                        "requirement_text":  "PM은 AI가 추출한 요구사항을 추가, 수정, 삭제하고 기준선으로 확정할 수 있어야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -109,7 +109,7 @@
                                        "source_excerpt":  "AI 결과를 PM이 검토, 추가, 수정하고 우선순위를 승인한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-005",
+                                       "requirement_id":  5,
                                        "function_name":  "WBS 생성",
                                        "requirement_text":  "시스템은 확정된 요구사항과 프로젝트 방법론을 기반으로 계층형 WBS를 생성해야 한다.",
                                        "category":  "PROJECT_MANAGEMENT",
@@ -122,7 +122,7 @@
                                        "source_excerpt":  "WBS를 추출한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-006",
+                                       "requirement_id":  6,
                                        "function_name":  "WBS 예상 공수 산정",
                                        "requirement_text":  "시스템은 각 WBS 작업에 필요한 직군, 기술 및 예상 작업시간을 산정해야 한다.",
                                        "category":  "PROJECT_MANAGEMENT",
@@ -135,7 +135,7 @@
                                        "source_excerpt":  "WBS를 기준으로 M/M과 예상 견적을 산출한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-007",
+                                       "requirement_id":  7,
                                        "function_name":  "프로젝트 일정 추천",
                                        "requirement_text":  "시스템은 WBS, 선행 작업, 예상 공수, 프로젝트 방법론 및 프로젝트 기간을 기준으로 작업 일정을 추천해야 한다.",
                                        "category":  "PROJECT_MANAGEMENT",
@@ -148,7 +148,7 @@
                                        "source_excerpt":  "WBS 기준과 MC 방법론을 참고하여 일정을 추천한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-008",
+                                       "requirement_id":  8,
                                        "function_name":  "프로젝트 팀원 관리",
                                        "requirement_text":  "PM은 프로젝트 팀원의 직군, 보유 기술 및 가용 공수를 등록하고 관리할 수 있어야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -161,7 +161,7 @@
                                        "source_excerpt":  "각 작업에 적합한 담당자를 추천한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-009",
+                                       "requirement_id":  9,
                                        "function_name":  "담당자 추천",
                                        "requirement_text":  "시스템은 WBS에 필요한 직군과 기술, 팀원의 기술과 가용 공수를 고려해 담당자를 추천해야 한다.",
                                        "category":  "PROJECT_MANAGEMENT",
@@ -174,7 +174,7 @@
                                        "source_excerpt":  "담당자를 추천한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-010",
+                                       "requirement_id":  10,
                                        "function_name":  "M/M 계산",
                                        "requirement_text":  "시스템은 WBS별 예상 공수를 기준으로 전체 및 직군별 M/M을 계산해야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -187,7 +187,7 @@
                                        "source_excerpt":  "M/M을 추출한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-011",
+                                       "requirement_id":  11,
                                        "function_name":  "예상 견적 계산",
                                        "requirement_text":  "시스템은 직군별 M/M과 직군별 월 단가를 이용해 프로젝트 예상 견적을 계산해야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -200,7 +200,7 @@
                                        "source_excerpt":  "예상 견적을 추출한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-012",
+                                       "requirement_id":  12,
                                        "function_name":  "산출물 목록 생성",
                                        "requirement_text":  "시스템은 초기 문서와 WBS를 기반으로 프로젝트에 필요한 산출물 목록을 생성해야 한다.",
                                        "category":  "PROJECT_MANAGEMENT",
@@ -213,7 +213,7 @@
                                        "source_excerpt":  "산출물 리스트를 추출한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-013",
+                                       "requirement_id":  13,
                                        "function_name":  "프로젝트 계획 검토 및 승인",
                                        "requirement_text":  "PM은 AI가 추천한 WBS, 일정, 담당자, M/M, 예상 견적 및 산출물 목록을 수정하고 최종 승인할 수 있어야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -226,7 +226,7 @@
                                        "source_excerpt":  "PM이 추천안을 수정한 후 최종 계획을 승인한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-014",
+                                       "requirement_id":  14,
                                        "function_name":  "팀원 업무 진행 관리",
                                        "requirement_text":  "팀원은 자신에게 배정된 WBS 작업을 조회하고 상태와 진행률을 업데이트할 수 있어야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -239,7 +239,7 @@
                                        "source_excerpt":  "팀원이 내 업무를 확인하고 업무 수행 및 진행 업데이트를 한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-015",
+                                       "requirement_id":  15,
                                        "function_name":  "회의록 분석",
                                        "requirement_text":  "시스템은 회의록 파일에서 결정 로그, 액션 아이템, 이슈·리스크 및 변경 요청 후보를 추출해야 한다.",
                                        "category":  "PROJECT_MANAGEMENT",
@@ -252,7 +252,7 @@
                                        "source_excerpt":  "회의록 파일에서 결정 로그, 액션 아이템, 이슈 리스크 변경 후보를 추출한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-016",
+                                       "requirement_id":  16,
                                        "function_name":  "주간보고서 생성",
                                        "requirement_text":  "시스템은 WBS 일정, 작업 진행률 및 완료된 액션 아이템을 기반으로 주간보고서를 생성해야 한다.",
                                        "category":  "PROJECT_MANAGEMENT",
@@ -265,7 +265,7 @@
                                        "source_excerpt":  "WBS 기준 일정과 완료된 액션 아이템을 바탕으로 주간보고서를 생성한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-017",
+                                       "requirement_id":  17,
                                        "function_name":  "최종보고서 생성",
                                        "requirement_text":  "시스템은 승인된 보고서와 프로젝트 이행 결과를 기반으로 최종보고서를 생성해야 한다.",
                                        "category":  "PROJECT_MANAGEMENT",
@@ -278,7 +278,7 @@
                                        "source_excerpt":  "승인된 보고서와 이행 결과를 바탕으로 최종보고서를 생성한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-018",
+                                       "requirement_id":  18,
                                        "function_name":  "산출물 기반 RAG 챗봇",
                                        "requirement_text":  "사용자는 승인된 프로젝트 산출물을 기반으로 질문하고 출처가 포함된 답변을 받을 수 있어야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -291,7 +291,7 @@
                                        "source_excerpt":  "산출물 기반 RAG 챗봇을 제공한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-019",
+                                       "requirement_id":  19,
                                        "function_name":  "프로젝트 변경 영향도 분석",
                                        "requirement_text":  "시스템은 요구사항, 담당자 또는 일정 변경이 WBS, 일정, 공수 및 예상 견적에 미치는 영향을 분석해야 한다.",
                                        "category":  "PROJECT_MANAGEMENT",
@@ -304,7 +304,7 @@
                                        "source_excerpt":  "프로젝트 요구사항, 담당자, 일정 변경 시 영향도를 분석한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-020",
+                                       "requirement_id":  20,
                                        "function_name":  "담당자 재배정 추천",
                                        "requirement_text":  "시스템은 담당자별 진행 상황, 일정, 기술 및 가용 공수를 고려해 지연 작업의 대체 담당자를 추천해야 한다.",
                                        "category":  "PROJECT_MANAGEMENT",
@@ -317,7 +317,7 @@
                                        "source_excerpt":  "각 담당자 진행 상황, 일정, 요구사항을 고려해 담당자 재배정을 추천한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-021",
+                                       "requirement_id":  21,
                                        "function_name":  "산출물 개인정보 및 대외비 검사",
                                        "requirement_text":  "시스템은 산출물 등록 전에 개인정보와 대외비 포함 가능성을 검사해야 한다.",
                                        "category":  "SECURITY",
@@ -330,7 +330,7 @@
                                        "source_excerpt":  "산출물 등록 전 개인정보 포함 여부와 대외비 여부를 AI가 자동으로 검사한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-022",
+                                       "requirement_id":  22,
                                        "function_name":  "산출물 관리 대장",
                                        "requirement_text":  "시스템은 산출물 목록, 문서 버전 및 승인 이력을 이용해 산출물 관리 대장을 제공해야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -343,7 +343,7 @@
                                        "source_excerpt":  "산출물 목록, 문서 저장소, 문서 버전과 승인 이력으로 산출물 관리 대장을 생성한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-023",
+                                       "requirement_id":  23,
                                        "function_name":  "미이행 산출물 탐지",
                                        "requirement_text":  "시스템은 미제출, 미승인 또는 기한을 초과한 산출물을 식별해야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -356,7 +356,7 @@
                                        "source_excerpt":  "미이행 산출물을 관리한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-024",
+                                       "requirement_id":  24,
                                        "function_name":  "일정 지연 가능성 탐지",
                                        "requirement_text":  "시스템은 WBS 일정, 진행률 및 팀원별 작업 진행 속도를 분석해 지연 가능성이 있는 작업을 탐지해야 한다.",
                                        "category":  "PROJECT_MANAGEMENT",
@@ -369,7 +369,7 @@
                                        "source_excerpt":  "팀원별 작업 진행 속도를 분석해 지연 가능성을 탐지한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-025",
+                                       "requirement_id":  25,
                                        "function_name":  "프로젝트 위험 신호등",
                                        "requirement_text":  "시스템은 일정과 WBS 위험도를 기준으로 프로젝트 및 작업 상태를 위험, 보통, 양호로 분류해야 한다.",
                                        "category":  "FUNCTIONAL",
@@ -382,7 +382,7 @@
                                        "source_excerpt":  "일정 또는 WBS 기준으로 위험, 보통, 양호 신호등을 제공한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-026",
+                                       "requirement_id":  26,
                                        "function_name":  "Slack 소통 단절 탐지",
                                        "requirement_text":  "시스템은 Slack 대화량 급감과 장기 미응답을 분석해 프로젝트 소통 단절 가능성을 탐지해야 한다.",
                                        "category":  "PROJECT_MANAGEMENT",
@@ -395,7 +395,7 @@
                                        "source_excerpt":  "Slack 대화량 급감, 장기 미응답 등 소통 단절 신호를 탐지한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-027",
+                                       "requirement_id":  27,
                                        "function_name":  "AI 작업 상태 관리",
                                        "requirement_text":  "시스템은 AI 작업의 대기, 처리 중, 성공 및 실패 상태를 관리하고 실패한 작업을 재시도할 수 있어야 한다.",
                                        "category":  "NON_FUNCTIONAL",
@@ -408,7 +408,7 @@
                                        "source_excerpt":  "프로젝트 문서 분석과 계획·보고·리스크 AI 기능을 서비스에서 실행한다."
                                    },
                                    {
-                                       "requirement_id":  "REQ-028",
+                                       "requirement_id":  28,
                                        "function_name":  "AI 분석 근거 제공",
                                        "requirement_text":  "시스템은 AI가 추출하거나 판단한 주요 결과에 원문 또는 데이터 근거를 제공해야 한다.",
                                        "category":  "NON_FUNCTIONAL",

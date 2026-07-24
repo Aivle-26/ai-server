@@ -17,7 +17,7 @@ load_dotenv()
 class GeneratedWBSTask(BaseModel):
     name: str
     description: str
-    mapped_requirement_ids: list[str] = Field(default_factory=list)
+    mapped_requirement_ids: list[int] = Field(default_factory=list)
     related_artifact_types: list[ArtifactType] = Field(default_factory=list)
     completion_criteria: list[str] = Field(min_length=1, max_length=20)
 
