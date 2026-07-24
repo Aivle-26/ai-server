@@ -227,13 +227,13 @@ class ReportLlmService:
 1. WBS 작업의 status, progress_rate, due_date를 기준으로 진행 현황을 판단한다.
 2. 완료 작업은 status가 DONE인 WBS와 completed_action_items를 기준으로 작성한다.
 3. 지연 작업은 due_date가 주간 종료일 이전이면서 status가 DONE이 아닌 작업을 기준으로 작성한다.
-4. 담당자가 없는 작업은 인력/역할 리스크로 언급한다.
+4. assignee_id가 null인 작업은 담당자 미지정 작업으로 보고 인력/역할 리스크로 언급한다.
 5. open_risks는 과장하지 말고 입력된 내용만 근거로 요약한다.
 6. 다음 주 계획은 지연 작업, 진행 중 작업, 열린 리스크를 기준으로 작성한다.
 7. 보고서 문체는 PM이 팀원 또는 관리자에게 공유하는 공식적이고 간결한 문체로 작성한다.
 8. 입력 데이터에 없는 내용은 추측하지 않는다.
 9. JSON 외의 설명 문장은 절대 출력하지 않는다.
-
+10. 가능한 경우 requirement_id, wbs_id, deliverable_id를 보고서 내용에 함께 언급하여 추적 가능하게 작성한다.
 반환 형식:
 {{
   "progress_summary": "이번 주 전체 진행 상황 요약",
@@ -350,6 +350,7 @@ WBS 작업 목록:
 4. 답변은 짧고 명확하게 작성한다.
 5. 가능한 경우 담당자, 날짜, 문서명, 페이지를 함께 언급한다.
 6. JSON 외의 설명 문장은 절대 출력하지 않는다.
+7. sources에 requirement_id, wbs_id, deliverable_id, review_status가 포함되어 있으면 답변에 함께 언급한다.
 
 반환 형식:
 {{

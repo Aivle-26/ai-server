@@ -79,9 +79,13 @@ class MeetingAnalysisResponse(BaseModel):
 
 class WbsTaskSnapshot(BaseModel):
     wbs_id: str
+    project_id: int | None = None
     requirement_id: str | None = None
+    parent_wbs_id: str | None = None
     task_name: str
-    assignee: str | None = None
+    task_description: str | None = None
+    task_type: str | None = None
+    assignee_id: str | None = None
     start_date: date | None = None
     due_date: date | None = None
     status: ActionStatus
@@ -159,6 +163,9 @@ class DeliverableDocument(BaseModel):
     document_name: str
     text: str
     page: int | None = None
+    requirement_id: str | None = None
+    wbs_id: str | None = None
+    review_status: str | None = None
 
 
 class DeliverableRagRequest(BaseModel):
@@ -174,6 +181,9 @@ class RagSource(BaseModel):
     document_name: str
     page: int | None = None
     excerpt: str
+    requirement_id: str | None = None
+    wbs_id: str | None = None
+    review_status: str | None = None
 
 
 class DeliverableRagResponse(BaseModel):

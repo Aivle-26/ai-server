@@ -1,4 +1,5 @@
 from datetime import datetime
+from urllib import request
 
 from app.schemas.report import (
     ActionItem,
@@ -79,7 +80,14 @@ class ReportService:
             for task in request.wbs_tasks
             if task.status != "DONE" and task.due_date and task.due_date < request.week_end
         ]
+        unassigned = [
+            task.task_name
+            for task in request.wbs_tasks
+            if not task.assignee_id
+        ]
+
         risks = [risk.risk_title for risk in request.open_risks]
+        risks += [f"담당자 미지정 작업: {task_name}" for task_name in unassigned]
 
         progress_avg = (
             sum(task.progress_rate for task in request.wbs_tasks) / len(request.wbs_tasks)
@@ -90,6 +98,7 @@ class ReportService:
         draft = (
             f"이번 주 프로젝트 평균 진행률은 {progress_avg:.1f}%입니다. "
             f"완료 작업은 {len(completed)}건, 지연 작업은 {len(delayed)}건, "
+            f"담당자 미지정 작업은 {len(unassigned)}건, "
             f"관리 중인 리스크는 {len(risks)}건입니다."
         )
 
@@ -145,12 +154,15 @@ class ReportService:
         for doc in request.deliverable_documents:
             if any(keyword in doc.text for keyword in question_keywords):
                 matched_sources.append(RagSource(
-                    deliverable_id=doc.deliverable_id,
-                    document_id=doc.document_id,
-                    document_name=doc.document_name,
-                    page=doc.page,
-                    excerpt=doc.text[:300],
-                ))
+                deliverable_id=doc.deliverable_id,
+                document_id=doc.document_id,
+                document_name=doc.document_name,
+                page=doc.page,
+                excerpt=doc.text[:300],
+                requirement_id=doc.requirement_id,
+                wbs_id=doc.wbs_id,
+                review_status=doc.review_status,
+            ))
 
         if request.enable_llm:
             llm_result = self.llm_service.answer_deliverable_rag(request, matched_sources)
