@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from app.agents.communication_risk_graph import CommunicationRiskGraph
+from app.agents.planning_cost_graph import PlanningCostGraph
 from app.agents.planning_document_graph import PlanningDocumentGraph
 from app.agents.planning_resource_graph import PlanningResourceGraph
 from app.agents.planning_schedule_graph import PlanningScheduleGraph
@@ -11,6 +12,7 @@ from app.schemas.communication_risk import (
     CommunicationRiskRequest,
     CommunicationRiskResponse,
 )
+from app.schemas.planning_cost import PlanningCostRequest, PlanningCostResponse
 from app.schemas.planning_document import PlanningDocumentExtractionResponse
 from app.schemas.planning_resource import (
     PlanningResourceRequest,
@@ -26,6 +28,10 @@ from app.services.planning_document_service import (
     MAX_FILE_COUNT,
     MAX_FILE_SIZE,
     UploadedDocument,
+)
+from app.services.planning_cost_llm_service import (
+    CostLLMConfigurationError,
+    CostLLMGenerationError,
 )
 from app.services.planning_resource_llm_service import (
     ResourceLLMConfigurationError,
@@ -47,6 +53,7 @@ app = FastAPI(
 )
 
 communication_risk_graph = CommunicationRiskGraph()
+planning_cost_graph = PlanningCostGraph()
 planning_document_graph = PlanningDocumentGraph()
 planning_wbs_graph = PlanningWBSGraph()
 planning_schedule_graph = PlanningScheduleGraph()
@@ -161,4 +168,23 @@ def recommend_planning_resources(request: PlanningResourceRequest) -> dict:
     except ResourceLLMConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ResourceLLMGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/v1/planning/costs/estimate",
+    response_model=PlanningCostResponse,
+    summary="프로젝트 예상 견적 생성",
+    description=(
+        "앞서 계산한 WBS별 MM과 사용자가 선택한 단가·운영 조건을 바탕으로 "
+        "인건비, 서버비, 라이선스비, AI API 비용과 예비비 10%를 적용한 "
+        "단일 권장 견적을 반환합니다."
+    ),
+)
+def estimate_planning_cost(request: PlanningCostRequest) -> dict:
+    try:
+        return planning_cost_graph.invoke(request)
+    except CostLLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except CostLLMGenerationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
