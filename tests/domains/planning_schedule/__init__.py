@@ -1,0 +1,1 @@
+"""Planning schedule domain tests."""
