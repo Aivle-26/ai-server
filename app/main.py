@@ -27,11 +27,14 @@ from app.services.planning_document_service import (
     UploadedDocument,
 )
 
+from app.api.risk_router import router as risk_router
 
 app = FastAPI(
-    title="AI 프로젝트 관리 서버",
+    title="AI Project Data Platform",
     version="0.1.0",
 )
+
+app.include_router(risk_router)
 
 communication_risk_graph = CommunicationRiskGraph()
 planning_document_graph = PlanningDocumentGraph()
