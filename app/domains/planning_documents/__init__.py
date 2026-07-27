@@ -1,0 +1,1 @@
+"""Planning document extraction domain."""

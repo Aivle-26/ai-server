@@ -18,11 +18,46 @@ OPENAI_PDF_DETAIL=auto
 
 API 키가 없거나 LLM 호출에 실패하면 규칙 기반 결과를 반환하며 `llm_status`에서 상태를 확인할 수 있습니다.
 
+## 디렉터리 구조
+
+코드는 기술 레이어가 아니라 실제 기능 경계를 기준으로 `app/domains` 아래에 배치합니다.
+
+```text
+app/
+|-- core/                         # DB 등 모든 도메인이 공유하는 기반 설정
+|-- domains/
+|   |-- communication_risk/       # Slack 커뮤니케이션 위험 분석
+|   |-- planning_documents/       # 기획 문서 파싱 및 요구사항 추출
+|   |-- reporting/                # 회의/주간/최종 보고서와 산출물 RAG
+|   `-- project_risk/             # 프로젝트 종합 위험 분석
+|       |-- adapters/             # GitHub, Jira, Slack 입력 연동
+|       |-- agents/               # 배정, 기획, 보고, 위험 에이전트
+|       |-- models/               # SQLAlchemy 영속 모델
+|       `-- services/             # 위험 판정 및 프로젝트 관리 서비스
+`-- main.py                       # FastAPI 생성 및 도메인 라우터 조립
+
+tests/
+`-- domains/                      # 애플리케이션 도메인 구조를 반영한 테스트
+```
+
+각 도메인은 자신의 `router.py`, 요청·응답 `schemas.py`, 실행 graph와 service를 함께 소유합니다.
+`app/main.py`에는 도메인 로직을 두지 않고 라우터 조립과 공통 상태 확인만 둡니다.
+
 ## API
 
 - `GET /health`: 서버 상태 확인
 - `POST /api/v1/risk/communication/analyze`: Slack 커뮤니케이션 위험 분석
 - `POST /api/v1/planning/documents/extract`: 프로젝트 기본정보 및 요구사항 후보 추출
+- `POST /api/v1/reports/meeting/analyze`: 회의록 기반 보고 데이터 추출
+- `POST /api/v1/reports/weekly/generate`: 주간 보고서 초안 생성
+- `POST /api/v1/reports/final/generate`: 최종 보고서 초안 생성
+- `POST /api/v1/reports/deliverables/rag/query`: 프로젝트 산출물 기반 질의응답
+- `POST /api/v1/risk/impact-assessment`: 요구사항 변경 영향도 평가
+- `POST /api/v1/risk/assignee-reassignment`: 담당자 재배정 추천
+- `POST /api/v1/risk/artifact-security`: 산출물 보안 검사
+- `POST /api/v1/risk/artifact-status`: 산출물 상태 검사
+- `POST /api/v1/risk/member-delay`: 구성원 업무 지연 분석
+- `POST /api/v1/risk/schedule-wbs-risk`: 일정 및 WBS 위험 분석
 
 기획 문서 추출 API는 `multipart/form-data` 요청을 받습니다.
 
