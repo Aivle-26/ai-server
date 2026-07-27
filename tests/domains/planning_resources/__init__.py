@@ -1,0 +1,1 @@
+"""Planning resources domain tests."""

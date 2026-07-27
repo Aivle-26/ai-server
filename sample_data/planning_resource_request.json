@@ -1,0 +1,66 @@
+{
+  "project_id": 1,
+  "wbs_tasks": [
+    {
+      "wbs_id": 10,
+      "wbs_name": "대시보드 API 구현",
+      "description": "학습 현황 데이터를 조회하는 Spring Boot API를 구현한다.",
+      "start_date": "2026-08-10",
+      "end_date": "2026-08-21"
+    }
+  ],
+  "project_members": [
+    {
+      "project_member_id": 101,
+      "roles": [
+        "BACKEND_DEVELOPER"
+      ],
+      "skills": [
+        {
+          "skill_code": "JAVA",
+          "proficiency_level": 4,
+          "experience_months": 36
+        },
+        {
+          "skill_code": "SPRING_BOOT",
+          "proficiency_level": 4,
+          "experience_months": 30
+        }
+      ],
+      "allocations": [
+        {
+          "allocation_start_date": "2026-08-01",
+          "allocation_end_date": "2026-12-31",
+          "available_hours_per_week": 20.0,
+          "allocation_status": "ACTIVE"
+        }
+      ]
+    },
+    {
+      "project_member_id": 102,
+      "roles": [
+        "BACKEND_DEVELOPER"
+      ],
+      "skills": [
+        {
+          "skill_code": "JAVA",
+          "proficiency_level": 3,
+          "experience_months": 20
+        },
+        {
+          "skill_code": "SPRING_BOOT",
+          "proficiency_level": 3,
+          "experience_months": 18
+        }
+      ],
+      "allocations": [
+        {
+          "allocation_start_date": "2026-08-01",
+          "allocation_end_date": "2026-09-30",
+          "available_hours_per_week": 16.0,
+          "allocation_status": "ACTIVE"
+        }
+      ]
+    }
+  ]
+}

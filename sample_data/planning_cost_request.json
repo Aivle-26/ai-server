@@ -1,0 +1,24 @@
+{
+  "project_id": 1,
+  "project_name": "AI 학생 맞춤형 학습지원시스템 구축",
+  "wbs_efforts": [
+    {
+      "wbs_id": 101,
+      "wbs_name": "학습 현황 대시보드 개발",
+      "description": "학생별 학습 현황을 조회할 수 있는 대시보드를 개발한다.",
+      "estimated_mm": 2.0
+    },
+    {
+      "wbs_id": 102,
+      "wbs_name": "AI 학습 분석 기능 개발",
+      "description": "학습 데이터를 AI로 분석하고 결과를 제공한다.",
+      "estimated_mm": 2.35
+    }
+  ],
+  "average_monthly_unit_price": 8000000,
+  "operation_months": 6,
+  "service_scale": "SMALL",
+  "uses_ai_api": true,
+  "paid_license_user_count": 5,
+  "include_vat": true
+}

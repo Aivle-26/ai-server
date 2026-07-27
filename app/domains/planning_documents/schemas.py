@@ -51,7 +51,7 @@ class ProjectBasicInfo(BaseModel):
 
 
 class RequirementCandidate(BaseModel):
-    requirement_id: str
+    requirement_id: int = Field(gt=0)
     function_name: str
     requirement_text: str
     category: RequirementCategory = "UNSPECIFIED"

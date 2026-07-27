@@ -1,3 +1,32 @@
-.venv/
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python bytecode and virtual environments
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Test, coverage, and static-analysis output
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local runtime output
+*.log
+
+# Local project decision notes
+LOCAL_DECISIONS.md
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
