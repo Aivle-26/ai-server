@@ -285,7 +285,7 @@ class PlanningDocumentGraphTest(unittest.TestCase):
 
     def test_openapi_exposes_files_as_binary_uploads(self):
         schema = app.openapi()
-        self.assertEqual(schema["info"]["title"], "AI 프로젝트 관리 서버")
+        self.assertEqual(schema["info"]["title"], "AI Project Data Platform")
         self.assertEqual(
             schema["paths"]["/api/v1/risk/communication/analyze"]["post"]["summary"],
             "프로젝트 커뮤니케이션 위험 분석",
