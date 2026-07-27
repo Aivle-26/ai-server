@@ -292,7 +292,7 @@ class PlanningDocumentGraphTest(unittest.TestCase):
         self.assertEqual(schema["info"]["title"], "AI Project Data Platform")
         self.assertEqual(
             schema["paths"]["/api/v1/risk/communication/analyze"]["post"]["summary"],
-            "프로젝트 커뮤니케이션 위험 분석",
+            "Slack 커뮤니케이션 리스크 분석",
         )
         self.assertEqual(
             schema["paths"]["/api/v1/planning/documents/extract"]["post"]["summary"],
