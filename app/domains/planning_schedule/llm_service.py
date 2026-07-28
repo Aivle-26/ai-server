@@ -42,8 +42,8 @@ class PlanningScheduleLLMService:
         if not api_key:
             raise ScheduleLLMConfigurationError("OPENAI_API_KEY가 설정되지 않았습니다.")
 
-        client = OpenAI(api_key=api_key, timeout=60, max_retries=1)
         try:
+            client = OpenAI(api_key=api_key, timeout=60, max_retries=1)
             response = client.responses.parse(
                 model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
                 instructions=self._instructions(),
