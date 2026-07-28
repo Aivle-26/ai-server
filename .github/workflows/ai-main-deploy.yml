@@ -17,7 +17,7 @@ jobs:
   deploy:
     name: Test and Deploy to Existing EC2
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     if: github.ref == 'refs/heads/main'
 
     steps:
@@ -38,6 +38,7 @@ jobs:
           python -m pip install --disable-pip-version-check -r requirements.txt
           python -m unittest discover -v
           python -m compileall -q app tests
+          python -m pip check
 
       - name: Package AI server source
         id: package
@@ -56,7 +57,17 @@ jobs:
             --exclude='./.env.*' \
             --exclude='./data' \
             --exclude='./logs' \
+            --exclude='./sample_data' \
             -czf "$archive" .
+
+          archive_listing="$(tar -tzf "$archive")"
+          grep -Fxq './scripts/deploy.sh' <<<"$archive_listing"
+          grep -Fxq './scripts/rollback.sh' <<<"$archive_listing"
+          grep -Fxq './scripts/health-check.sh' <<<"$archive_listing"
+          if grep -Eq '^\./sample_data(/|$)' <<<"$archive_listing"; then
+            echo "sample_data must not be packaged for deployment" >&2
+            exit 1
+          fi
 
           echo "path=$archive" >> "$GITHUB_OUTPUT"
 
@@ -126,107 +137,29 @@ jobs:
             -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
             -o StrictHostKeyChecking=yes \
             "${EC2_USER}@${EC2_HOST}" \
-            "REMOTE_ARCHIVE='${REMOTE_ARCHIVE}' REVISION='${GITHUB_SHA}' bash -s" <<'REMOTE_DEPLOY'
+            "bash /opt/aipm/ai-server/scripts/deploy.sh '${REMOTE_ARCHIVE}' '${GITHUB_SHA}'"
+
+      - name: Verify deployed revision and service
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          SSH_KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS_FILE: ${{ steps.ssh.outputs.known_hosts_file }}
+        run: |
           set -euo pipefail
 
-          DEPLOY_DIR="/opt/aipm/ai-server"
-          VENV_DIR="$DEPLOY_DIR/.venv"
-          ENV_FILE="/etc/aipm-ai-test.env"
-          AI_SERVICE="aipm-ai-test.service"
-          HEALTH_URL="http://127.0.0.1:8090/health"
-          NGINX_HEALTH_URL="http://127.0.0.1/ai-test/health"
-          RELEASE_DIR="/tmp/aipm-ai-release-${REVISION}"
-          BACKUP_DIR="/tmp/aipm-ai-backup-${REVISION}"
-          HEALTH_RETRIES=30
-          HEALTH_SLEEP_SECONDS=2
-          RSYNC_ARGS=(
-            --archive
-            --delete
-            '--exclude=.venv/'
-            '--exclude=data/'
-            '--exclude=logs/'
-            '--exclude=.env'
-            '--exclude=.env.*'
-          )
+          ssh \
+            -i "$SSH_KEY_FILE" \
+            -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
+            -o StrictHostKeyChecking=yes \
+            "${EC2_USER}@${EC2_HOST}" \
+            "test \"\$(cat /opt/aipm/ai-server/REVISION)\" = '${GITHUB_SHA}' \
+              && sudo -n systemctl is-active --quiet aipm-ai-server.service \
+              && sudo -n systemctl is-enabled --quiet aipm-ai-server.service \
+              && /opt/aipm/ai-server/scripts/health-check.sh"
 
-          cleanup() {
-            rm -f "$REMOTE_ARCHIVE"
-            rm -rf "$RELEASE_DIR" "$BACKUP_DIR"
-          }
-
-          wait_for_health() {
-            local attempt
-            for attempt in $(seq 1 "$HEALTH_RETRIES"); do
-              if curl --fail --silent --show-error "$HEALTH_URL" >/dev/null \
-                && curl --fail --silent --show-error "$NGINX_HEALTH_URL" >/dev/null; then
-                echo "AI health check succeeded"
-                return 0
-              fi
-
-              echo "AI health check attempt ${attempt}/${HEALTH_RETRIES} failed"
-              sleep "$HEALTH_SLEEP_SECONDS"
-            done
-            return 1
-          }
-
-          rollback() {
-            local reason="$1"
-            echo "AI deployment failed; rolling back: $reason" >&2
-            set +e
-            rsync "${RSYNC_ARGS[@]}" "$BACKUP_DIR/" "$DEPLOY_DIR/"
-            sudo -n systemctl restart "$AI_SERVICE"
-            wait_for_health
-            exit 1
-          }
-
-          trap cleanup EXIT
-
-          test -f "$REMOTE_ARCHIVE"
-          test -d "$DEPLOY_DIR"
-          test -x "$VENV_DIR/bin/python"
-          sudo -n test -f "$ENV_FILE"
-          sudo -n true
-          sudo -n systemctl is-active --quiet "$AI_SERVICE"
-          command -v rsync >/dev/null
-          command -v tar >/dev/null
-          command -v curl >/dev/null
-
-          rm -rf "$RELEASE_DIR" "$BACKUP_DIR"
-          mkdir -p "$RELEASE_DIR" "$BACKUP_DIR"
-          tar -xzf "$REMOTE_ARCHIVE" -C "$RELEASE_DIR"
-
-          test -f "$RELEASE_DIR/app/main.py"
-          test -f "$RELEASE_DIR/requirements.txt"
-
-          "$VENV_DIR/bin/python" -m pip install \
-            --disable-pip-version-check \
-            -r "$RELEASE_DIR/requirements.txt"
-
-          (
-            cd "$RELEASE_DIR"
-            "$VENV_DIR/bin/python" -m unittest discover -v
-            "$VENV_DIR/bin/python" -m compileall -q app tests
-            "$VENV_DIR/bin/python" -m pip check
-          )
-
-          rsync "${RSYNC_ARGS[@]}" "$DEPLOY_DIR/" "$BACKUP_DIR/"
-
-          if ! rsync "${RSYNC_ARGS[@]}" "$RELEASE_DIR/" "$DEPLOY_DIR/"; then
-            rollback "code synchronization failed"
-          fi
-
-          if ! sudo -n systemctl restart "$AI_SERVICE"; then
-            rollback "systemd restart failed"
-          fi
-
-          if ! wait_for_health; then
-            rollback "health check failed"
-          fi
-
-          echo "AI deployment succeeded: ${REVISION}"
-          REMOTE_DEPLOY
-
-      - name: Cleanup remote deployment files
+      - name: Cleanup remote deployment archive
         if: always()
         shell: bash
         env:
@@ -242,13 +175,15 @@ jobs:
           fi
 
           remote_archive="${REMOTE_ARCHIVE:-/tmp/aipm-ai-${GITHUB_SHA}.tar.gz}"
-
           ssh \
             -i "$SSH_KEY_FILE" \
             -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
             -o StrictHostKeyChecking=yes \
             "${EC2_USER}@${EC2_HOST}" \
-            "rm -f '${remote_archive}'; rm -rf '/tmp/aipm-ai-release-${GITHUB_SHA}' '/tmp/aipm-ai-backup-${GITHUB_SHA}'" \
+            "rm -f '${remote_archive}'; \
+              find /tmp -maxdepth 1 -type d -user '${EC2_USER}' \
+                -name 'aipm-ai-release-${GITHUB_SHA}.*' \
+                -exec rm -rf -- {} +" \
             || true
 
       - name: Remove SSH files
