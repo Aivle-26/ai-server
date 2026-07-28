@@ -99,6 +99,12 @@ def analyze_schedule_task(
             "시작 예정일이 지났지만 업무가 시작되지 않았습니다."
         )
 
+    if completed:
+        score = 0
+        reasons = [
+            "업무가 완료되어 일정 위험이 없습니다."
+        ]
+
     score = min(score, 100)
 
     if score >= 60:

@@ -569,15 +569,15 @@ def inspect_artifact_status(
         if name in registered_names
     )
 
-    approved_count = sum(
-        1
+    approved_count = len({
+        artifact.artifact_name
         for artifact in request.registered_artifacts
         if (
             artifact.artifact_name
             in request.required_artifacts
             and artifact.approved
         )
-    )
+    })
 
     completion_rate = (
         registered_count / required_count * 100
