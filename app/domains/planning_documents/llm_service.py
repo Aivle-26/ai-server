@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 from datetime import date
+from time import perf_counter
 from typing import Any, Literal
 
 from dotenv import load_dotenv
@@ -16,6 +18,7 @@ from .schemas import RequiredArtifact, RequirementCategory
 
 
 load_dotenv()
+logger = logging.getLogger("uvicorn.error")
 
 
 class ExtractedProjectInfo(BaseModel):
@@ -55,38 +58,91 @@ class PlanningLLMExtractionService:
         chunks: list[dict[str, Any]],
         vision_documents: list[Any],
         fallback_extractions: list[dict[str, Any]],
+        request_id: str = "untracked",
     ) -> tuple[list[dict[str, Any]], str]:
         api_key = os.getenv("OPENAI_API_KEY")
+        model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
         if not api_key:
+            self._audit(
+                "fallback_used",
+                request_id=request_id,
+                model=model,
+                reason="missing_api_key",
+            )
             return fallback_extractions, "SKIPPED_NO_API_KEY"
 
         results: list[dict[str, Any]] = []
         used_fallback = False
+        call_index = 0
 
         if chunks:
             try:
                 llm = ChatOpenAI(
-                    model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+                    model=model,
                     temperature=0,
                     api_key=api_key,
                     timeout=60,
                     max_retries=2,
                 ).with_structured_output(DocumentChunkExtraction)
                 for chunk, fallback in zip(chunks, fallback_extractions, strict=True):
+                    call_index += 1
+                    started_at = perf_counter()
+                    self._audit(
+                        "provider_call_started",
+                        request_id=request_id,
+                        model=model,
+                        call_index=call_index,
+                    )
                     try:
                         result = llm.invoke([
                             SystemMessage(content=self._instructions()),
                             HumanMessage(content=json.dumps(chunk, ensure_ascii=False)),
                         ])
+                        self._audit(
+                            "provider_call_succeeded",
+                            request_id=request_id,
+                            model=model,
+                            call_index=call_index,
+                            latency_ms=self._elapsed_ms(started_at),
+                        )
                         results.append(self._normalize_result(
                             result.model_dump(mode="json"),
                             source_document=chunk["source_document"],
                             source_text=chunk["text"],
                         ))
-                    except Exception:
+                    except Exception as exc:
+                        self._audit(
+                            "provider_call_failed",
+                            request_id=request_id,
+                            model=model,
+                            call_index=call_index,
+                            latency_ms=self._elapsed_ms(started_at),
+                            exception_type=type(exc).__name__,
+                        )
+                        self._audit(
+                            "fallback_used",
+                            request_id=request_id,
+                            model=model,
+                            call_index=call_index,
+                            reason="provider_call_failed",
+                        )
                         results.append(fallback)
                         used_fallback = True
-            except Exception:
+            except Exception as exc:
+                self._audit(
+                    "provider_call_failed",
+                    request_id=request_id,
+                    model=model,
+                    call_index=0,
+                    exception_type=type(exc).__name__,
+                    phase="client_initialization",
+                )
+                self._audit(
+                    "fallback_used",
+                    request_id=request_id,
+                    model=model,
+                    reason="client_initialization_failed",
+                )
                 results.extend(fallback_extractions)
                 used_fallback = True
 
@@ -94,14 +150,95 @@ class PlanningLLMExtractionService:
             try:
                 client = OpenAI(api_key=api_key, timeout=120, max_retries=2)
                 for document in vision_documents:
+                    call_index += 1
+                    started_at = perf_counter()
+                    self._audit(
+                        "provider_call_started",
+                        request_id=request_id,
+                        model=model,
+                        call_index=call_index,
+                    )
                     try:
                         results.append(self._extract_pdf_with_vision(client, document))
-                    except Exception:
+                        self._audit(
+                            "provider_call_succeeded",
+                            request_id=request_id,
+                            model=model,
+                            call_index=call_index,
+                            latency_ms=self._elapsed_ms(started_at),
+                        )
+                    except Exception as exc:
+                        self._audit(
+                            "provider_call_failed",
+                            request_id=request_id,
+                            model=model,
+                            call_index=call_index,
+                            latency_ms=self._elapsed_ms(started_at),
+                            exception_type=type(exc).__name__,
+                        )
+                        self._audit(
+                            "fallback_used",
+                            request_id=request_id,
+                            model=model,
+                            call_index=call_index,
+                            reason="provider_call_failed",
+                        )
                         used_fallback = True
-            except Exception:
+            except Exception as exc:
+                self._audit(
+                    "provider_call_failed",
+                    request_id=request_id,
+                    model=model,
+                    call_index=0,
+                    exception_type=type(exc).__name__,
+                    phase="client_initialization",
+                )
+                self._audit(
+                    "fallback_used",
+                    request_id=request_id,
+                    model=model,
+                    reason="client_initialization_failed",
+                )
                 used_fallback = True
 
         return results, "FALLBACK" if used_fallback else "SUCCEEDED"
+
+    def _elapsed_ms(self, started_at: float) -> int:
+        return round((perf_counter() - started_at) * 1000)
+
+    def _audit(
+        self,
+        event: str,
+        *,
+        request_id: str,
+        model: str,
+        call_index: int | None = None,
+        latency_ms: int | None = None,
+        reason: str | None = None,
+        exception_type: str | None = None,
+        phase: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "event": event,
+            "request_id": request_id,
+            "model": model,
+        }
+        optional_fields = {
+            "call_index": call_index,
+            "latency_ms": latency_ms,
+            "reason": reason,
+            "exception_type": exception_type,
+            "phase": phase,
+        }
+        payload.update({
+            key: value
+            for key, value in optional_fields.items()
+            if value is not None
+        })
+        logger.info(
+            "provider_audit %s",
+            json.dumps(payload, separators=(",", ":"), sort_keys=True),
+        )
 
     def _extract_pdf_with_vision(self, client: OpenAI, document: Any) -> dict[str, Any]:
         encoded_pdf = base64.b64encode(document.content).decode("ascii")

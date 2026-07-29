@@ -35,7 +35,13 @@ REQ-002 시스템은 개인정보를 저장할 때 암호화해야 한다.
 
 
 class FakeLLMService:
-    def extract(self, chunks, vision_documents, fallback_extractions):
+    def extract(
+        self,
+        chunks,
+        vision_documents,
+        fallback_extractions,
+        request_id="untracked",
+    ):
         result = fallback_extractions
         result[0]["project_info"]["project_name"] = "LLM 추출 프로젝트"
         result[0]["requirements"][0]["acceptance_criteria"] = "대시보드 조회 테스트 통과"
@@ -44,12 +50,24 @@ class FakeLLMService:
 
 
 class NoApiKeyLLMService:
-    def extract(self, chunks, vision_documents, fallback_extractions):
+    def extract(
+        self,
+        chunks,
+        vision_documents,
+        fallback_extractions,
+        request_id="untracked",
+    ):
         return fallback_extractions, "SKIPPED_NO_API_KEY"
 
 
 class FakeVisionLLMService:
-    def extract(self, chunks, vision_documents, fallback_extractions):
+    def extract(
+        self,
+        chunks,
+        vision_documents,
+        fallback_extractions,
+        request_id="untracked",
+    ):
         document = vision_documents[0]
         return [{
             "project_info": {

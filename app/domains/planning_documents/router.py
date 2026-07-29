@@ -1,3 +1,8 @@
+import json
+import logging
+from time import perf_counter
+from uuid import uuid4
+
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from .document_parser import (
@@ -11,6 +16,7 @@ from .schemas import PlanningDocumentExtractionResponse
 
 router = APIRouter()
 planning_document_graph = PlanningDocumentGraph()
+logger = logging.getLogger("uvicorn.error")
 
 
 @router.post(
@@ -31,6 +37,8 @@ async def extract_planning_documents(
         },
     ),
 ) -> dict:
+    request_id = uuid4().hex
+    started_at = perf_counter()
     if len(files) > MAX_FILE_COUNT:
         raise HTTPException(
             status_code=422,
@@ -55,6 +63,26 @@ async def extract_planning_documents(
         )
 
     try:
-        return planning_document_graph.invoke(uploads)
+        result = planning_document_graph.invoke(
+            uploads,
+            request_id=request_id,
+        )
+        logger.info(
+            "planning_extract_audit %s",
+            json.dumps(
+                {
+                    "event": "planning_extract_completed",
+                    "request_id": request_id,
+                    "llm_status": result.get("llm_status"),
+                    "document_count": len(uploads),
+                    "latency_ms": round(
+                        (perf_counter() - started_at) * 1000
+                    ),
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
+        return result
     except DocumentExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
