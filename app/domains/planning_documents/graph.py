@@ -9,6 +9,7 @@ from .llm_service import PlanningLLMExtractionService
 
 
 class PlanningDocumentState(TypedDict, total=False):
+    request_id: str
     uploads: list[UploadedDocument]
     documents: list[Any]
     chunks: list[dict[str, Any]]
@@ -30,8 +31,15 @@ class PlanningDocumentGraph:
         self.llm_service = llm_service or PlanningLLMExtractionService()
         self.graph = self._build()
 
-    def invoke(self, uploads: list[UploadedDocument]) -> dict[str, Any]:
-        return self.graph.invoke({"uploads": uploads})["result"]
+    def invoke(
+        self,
+        uploads: list[UploadedDocument],
+        request_id: str = "untracked",
+    ) -> dict[str, Any]:
+        return self.graph.invoke({
+            "uploads": uploads,
+            "request_id": request_id,
+        })["result"]
 
     def _build(self):
         workflow = StateGraph(PlanningDocumentState)
@@ -67,6 +75,7 @@ class PlanningDocumentGraph:
             chunks=state["chunks"],
             vision_documents=state["vision_documents"],
             fallback_extractions=state["fallback_extractions"],
+            request_id=state["request_id"],
         )
         return {"partial_extractions": partials, "llm_status": status}
 

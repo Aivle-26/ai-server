@@ -78,6 +78,38 @@ class PlanningDocumentLlmServiceTest(unittest.TestCase):
         self.assertEqual(requirement["source_document"], "rfp.txt")
         self.assertIsNone(requirement["source_excerpt"])
 
+    def test_success_logs_one_provider_pair_without_fallback(self):
+        structured = MagicMock()
+        structured.invoke.return_value = DocumentChunkExtraction(
+            project_info=ExtractedProjectInfo(project_name="AIPM"),
+            requirements=[],
+        )
+        chat = MagicMock()
+        chat.with_structured_output.return_value = structured
+
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True),
+            patch(
+                "app.domains.planning_documents.llm_service.ChatOpenAI",
+                return_value=chat,
+            ),
+            self.assertLogs("uvicorn.error", level="INFO") as captured,
+        ):
+            _, status = self.service.extract(
+                [CHUNK],
+                [],
+                [FALLBACK],
+                request_id="request-123",
+            )
+
+        logs = "\n".join(captured.output)
+        self.assertEqual(status, "SUCCEEDED")
+        self.assertEqual(logs.count('"event":"provider_call_started"'), 1)
+        self.assertEqual(logs.count('"event":"provider_call_succeeded"'), 1)
+        self.assertNotIn('"event":"fallback_used"', logs)
+        self.assertIn('"request_id":"request-123"', logs)
+        self.assertNotIn("test-key", logs)
+
     def test_text_timeout_uses_matching_fallback(self):
         structured = MagicMock()
         structured.invoke.side_effect = TimeoutError("timeout")
@@ -97,6 +129,38 @@ class PlanningDocumentLlmServiceTest(unittest.TestCase):
 
         self.assertEqual(results, [FALLBACK])
         self.assertEqual(status, "FALLBACK")
+
+    def test_failure_audit_omits_exception_message_and_input_content(self):
+        structured = MagicMock()
+        structured.invoke.side_effect = TimeoutError(
+            "secret-prompt-content"
+        )
+        chat = MagicMock()
+        chat.with_structured_output.return_value = structured
+
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True),
+            patch(
+                "app.domains.planning_documents.llm_service.ChatOpenAI",
+                return_value=chat,
+            ),
+            self.assertLogs("uvicorn.error", level="INFO") as captured,
+        ):
+            _, status = self.service.extract(
+                [CHUNK],
+                [],
+                [FALLBACK],
+                request_id="request-failed",
+            )
+
+        logs = "\n".join(captured.output)
+        self.assertEqual(status, "FALLBACK")
+        self.assertIn('"event":"provider_call_failed"', logs)
+        self.assertIn('"exception_type":"TimeoutError"', logs)
+        self.assertIn('"event":"fallback_used"', logs)
+        self.assertNotIn("secret-prompt-content", logs)
+        self.assertNotIn(CHUNK["text"], logs)
+        self.assertNotIn("test-key", logs)
 
     def test_vision_client_creation_failure_is_contained(self):
         document = ParsedDocument(

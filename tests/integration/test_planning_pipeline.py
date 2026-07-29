@@ -32,7 +32,13 @@ from app.main import app
 
 
 class FakeDocumentLlm:
-    def extract(self, chunks, vision_documents, fallback_extractions):
+    def extract(
+        self,
+        chunks,
+        vision_documents,
+        fallback_extractions,
+        request_id="untracked",
+    ):
         source_document = chunks[0]["source_document"]
         return [
             {
