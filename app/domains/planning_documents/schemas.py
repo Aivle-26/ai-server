@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 Priority = Literal["HIGH", "MEDIUM", "LOW", "UNSPECIFIED"]
@@ -29,6 +29,49 @@ ArtifactType = Literal[
     "UI_DESIGN",
 ]
 LLMStatus = Literal["SUCCEEDED", "SKIPPED_NO_API_KEY", "FALLBACK"]
+RequirementChangeType = Literal["ADDED", "MODIFIED", "REMOVED", "UNCHANGED"]
+RequirementReviewStatus = Literal["PENDING_REVIEW"]
+
+
+class DocumentManifestItem(BaseModel):
+    document_id: int = Field(gt=0)
+    file_name: str = Field(min_length=1)
+
+
+class NormalizedBoundingBox(BaseModel):
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+    width: float = Field(gt=0.0, le=1.0)
+    height: float = Field(gt=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_page_bounds(self) -> "NormalizedBoundingBox":
+        if self.x + self.width > 1.0 or self.y + self.height > 1.0:
+            raise ValueError("bounding box must stay within the page")
+        return self
+
+
+class RequirementEvidence(BaseModel):
+    document_id: int | None = Field(default=None, gt=0)
+    source_document: str
+    page_number: int | None = Field(default=None, gt=0)
+    chunk_id: str
+    quote_text: str = Field(min_length=1)
+    start_offset: int | None = Field(default=None, ge=0)
+    end_offset: int | None = Field(default=None, ge=0)
+    bounding_boxes: list[NormalizedBoundingBox] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> "RequirementEvidence":
+        if (self.start_offset is None) != (self.end_offset is None):
+            raise ValueError("start_offset and end_offset must be provided together")
+        if (
+            self.start_offset is not None
+            and self.end_offset is not None
+            and self.end_offset <= self.start_offset
+        ):
+            raise ValueError("end_offset must be greater than start_offset")
+        return self
 
 
 class RequiredArtifact(BaseModel):
@@ -62,6 +105,33 @@ class RequirementCandidate(BaseModel):
     security_condition: str | None = None
     source_document: str
     source_excerpt: str | None = None
+    evidences: list[RequirementEvidence] = Field(default_factory=list)
+
+
+class ExistingRequirement(BaseModel):
+    requirement_id: int = Field(gt=0)
+    function_name: str
+    requirement_text: str
+    category: RequirementCategory = "UNSPECIFIED"
+    priority: Priority = "UNSPECIFIED"
+    acceptance_criteria: str | None = None
+    due_date: date | None = None
+    deliverable_name: str | None = None
+    security_condition: str | None = None
+    source_document: str
+    source_excerpt: str | None = None
+    evidences: list[RequirementEvidence] = Field(default_factory=list)
+
+
+class RequirementChangeCandidate(BaseModel):
+    candidate_id: str
+    existing_requirement_id: int | None = Field(default=None, gt=0)
+    change_type: RequirementChangeType
+    change_reason: str
+    existing_requirement: ExistingRequirement | None = None
+    proposed_requirement: RequirementCandidate | None = None
+    evidences: list[RequirementEvidence] = Field(default_factory=list)
+    review_status: RequirementReviewStatus = "PENDING_REVIEW"
 
 
 class ParsedDocumentInfo(BaseModel):
@@ -74,5 +144,11 @@ class ParsedDocumentInfo(BaseModel):
 class PlanningDocumentExtractionResponse(BaseModel):
     project_info: ProjectBasicInfo
     requirement_candidates: list[RequirementCandidate]
+    documents: list[ParsedDocumentInfo]
+    llm_status: LLMStatus
+
+
+class PlanningRequirementReadjustmentResponse(BaseModel):
+    change_candidates: list[RequirementChangeCandidate]
     documents: list[ParsedDocumentInfo]
     llm_status: LLMStatus
