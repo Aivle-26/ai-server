@@ -1,5 +1,7 @@
 import os
+import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -32,6 +34,20 @@ class CapturingGraph:
             }],
             "llm_status": "SUCCEEDED",
         }
+
+
+class SlowGraph:
+    settings = SimpleNamespace(
+        planning_analysis_timeout_seconds=0.01
+    )
+
+    def __init__(self):
+        self.invocation_count = 0
+
+    def invoke(self, uploads, request_id="untracked"):
+        self.invocation_count += 1
+        time.sleep(0.05)
+        return {}
 
 
 class PlanningDocumentRouterTest(unittest.TestCase):
@@ -118,6 +134,30 @@ class PlanningDocumentRouterTest(unittest.TestCase):
         self.assertIn('"event":"planning_extract_completed"', logs)
         self.assertIn(f'"request_id":"{graph.request_id}"', logs)
         self.assertIn('"llm_status":"SUCCEEDED"', logs)
+
+    def test_request_timeout_returns_existing_error_shape_without_retry(self):
+        graph = SlowGraph()
+        with patch(
+            "app.domains.planning_documents.router.planning_document_graph",
+            graph,
+        ):
+            response = self.client.post(
+                "/api/v1/planning/documents/extract",
+                files={"files": ("slow.txt", b"content", "text/plain")},
+            )
+
+        time.sleep(0.06)
+        self.assertEqual(response.status_code, 504)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": (
+                    "문서 분석 시간이 초과되었습니다. "
+                    "잠시 후 다시 시도해 주세요."
+                )
+            },
+        )
+        self.assertEqual(graph.invocation_count, 1)
 
 
 if __name__ == "__main__":

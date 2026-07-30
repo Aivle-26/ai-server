@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from time import perf_counter
@@ -13,6 +14,7 @@ from .document_parser import (
 )
 from .graph import PlanningDocumentGraph
 from .schemas import PlanningDocumentExtractionResponse
+from .settings import PlanningAnalysisSettings
 
 router = APIRouter()
 planning_document_graph = PlanningDocumentGraph()
@@ -63,9 +65,31 @@ async def extract_planning_documents(
         )
 
     try:
-        result = planning_document_graph.invoke(
-            uploads,
-            request_id=request_id,
+        graph_settings = getattr(
+            planning_document_graph,
+            "settings",
+            None,
+        ) or PlanningAnalysisSettings.from_env()
+        deadline_monotonic = (
+            started_at
+            + graph_settings.planning_analysis_timeout_seconds
+        )
+        remaining_timeout = deadline_monotonic - perf_counter()
+        if remaining_timeout <= 0:
+            raise TimeoutError("planning analysis deadline reached")
+        invoke_kwargs = {"request_id": request_id}
+        if isinstance(planning_document_graph, PlanningDocumentGraph):
+            invoke_kwargs.update({
+                "started_at": started_at,
+                "deadline_monotonic": deadline_monotonic,
+            })
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                planning_document_graph.invoke,
+                uploads,
+                **invoke_kwargs,
+            ),
+            timeout=remaining_timeout,
         )
         logger.info(
             "planning_extract_audit %s",
@@ -84,5 +108,29 @@ async def extract_planning_documents(
             ),
         )
         return result
+    except TimeoutError as exc:
+        logger.warning(
+            "planning_extract_audit %s",
+            json.dumps(
+                {
+                    "event": "planning_extract_timed_out",
+                    "request_id": request_id,
+                    "document_count": len(uploads),
+                    "latency_ms": round(
+                        (perf_counter() - started_at) * 1000
+                    ),
+                    "timed_out": True,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                "문서 분석 시간이 초과되었습니다. "
+                "잠시 후 다시 시도해 주세요."
+            ),
+        ) from exc
     except DocumentExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

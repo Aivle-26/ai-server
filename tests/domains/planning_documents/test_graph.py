@@ -11,6 +11,7 @@ from pypdf import PdfWriter
 from app.domains.planning_documents.graph import PlanningDocumentGraph
 from app.main import app
 from app.domains.planning_documents.document_parser import (
+    ParsedDocument,
     PlanningDocumentService,
     UploadedDocument,
 )
@@ -97,6 +98,63 @@ class FakeVisionLLMService:
         }], "SUCCEEDED"
 
 
+class ThreeChunkDocumentService(PlanningDocumentService):
+    def __init__(self):
+        self.parse_count = 0
+        self.build_chunks_count = 0
+
+    def parse_documents(self, uploads):
+        self.parse_count += 1
+        return [
+            ParsedDocument(
+                "large.txt",
+                "TXT",
+                "sensitive source text",
+                b"sensitive source text",
+                "TEXT",
+            )
+        ]
+
+    def build_chunks(self, documents):
+        self.build_chunks_count += 1
+        return [
+            {
+                "source_document": "large.txt",
+                "chunk_index": 1,
+                "text": "general introduction",
+            },
+            {
+                "source_document": "large.txt",
+                "chunk_index": 2,
+                "text": "company history",
+            },
+            {
+                "source_document": "large.txt",
+                "chunk_index": 3,
+                "text": "system must implement required security",
+            },
+        ]
+
+
+class CapturingChunkLLMService:
+    def __init__(self):
+        self.pipeline_invocation_count = 0
+        self.provider_call_count = 0
+        self.chunks = []
+
+    def extract(
+        self,
+        chunks,
+        vision_documents,
+        fallback_extractions,
+        request_id="untracked",
+    ):
+        self.pipeline_invocation_count += 1
+        self.provider_call_count += len(chunks) + len(vision_documents)
+        self.chunks = chunks
+        return fallback_extractions, "SUCCEEDED"
+
+
 class CapturingResponses:
     def __init__(self):
         self.request = None
@@ -152,6 +210,38 @@ class PlanningDocumentGraphTest(unittest.TestCase):
         self.assertEqual(
             result["requirement_candidates"][0]["acceptance_criteria"],
             "대시보드 조회 테스트 통과",
+        )
+
+    def test_graph_selects_at_most_two_inputs_before_single_llm_stage(self):
+        document_service = ThreeChunkDocumentService()
+        llm_service = CapturingChunkLLMService()
+        graph = PlanningDocumentGraph(
+            document_service=document_service,
+            llm_service=llm_service,
+        )
+
+        with self.assertLogs("uvicorn.error", level="INFO") as captured:
+            result = graph.invoke([self.upload], request_id="bounded")
+
+        self.assertEqual(document_service.parse_count, 1)
+        self.assertEqual(document_service.build_chunks_count, 1)
+        self.assertEqual(llm_service.pipeline_invocation_count, 1)
+        self.assertEqual(llm_service.provider_call_count, 2)
+        self.assertEqual(
+            [chunk["chunk_index"] for chunk in llm_service.chunks],
+            [1, 3],
+        )
+        self.assertEqual(result["llm_status"], "SUCCEEDED")
+
+        logs = "\n".join(captured.output)
+        self.assertIn('"total_chunks":3', logs)
+        self.assertIn('"selected_count":2', logs)
+        self.assertIn('"llm_call_count":2', logs)
+        self.assertIn('"request_id":"bounded"', logs)
+        self.assertNotIn("sensitive source text", logs)
+        self.assertNotIn(
+            "system must implement required security",
+            logs,
         )
 
     def test_hwpx_text_is_supported(self):

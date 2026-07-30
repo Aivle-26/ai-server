@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+from dataclasses import dataclass
 from datetime import date
 from time import perf_counter
 from typing import Any, Literal
@@ -15,6 +16,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from .schemas import RequiredArtifact, RequirementCategory
+from .settings import PlanningAnalysisSettings
 
 
 load_dotenv()
@@ -52,6 +54,20 @@ class DocumentChunkExtraction(BaseModel):
     requirements: list[ExtractedRequirement] = Field(default_factory=list, max_length=200)
 
 
+@dataclass(frozen=True)
+class PlanningLLMExtractionOutcome:
+    text_partials: list[dict[str, Any]]
+    vision_partials: list[dict[str, Any]]
+    status: str
+    call_count: int
+    timed_out: bool
+    fallback_used: bool
+
+    @property
+    def partials(self) -> list[dict[str, Any]]:
+        return [*self.text_partials, *self.vision_partials]
+
+
 class PlanningLLMExtractionService:
     def extract(
         self,
@@ -59,7 +75,38 @@ class PlanningLLMExtractionService:
         vision_documents: list[Any],
         fallback_extractions: list[dict[str, Any]],
         request_id: str = "untracked",
+        settings: PlanningAnalysisSettings | None = None,
+        deadline_monotonic: float | None = None,
     ) -> tuple[list[dict[str, Any]], str]:
+        resolved_settings = settings or PlanningAnalysisSettings.from_env()
+        resolved_deadline = (
+            deadline_monotonic
+            if deadline_monotonic is not None
+            else (
+                perf_counter()
+                + resolved_settings.planning_analysis_timeout_seconds
+            )
+        )
+        outcome = self.extract_with_metrics(
+            chunks=chunks,
+            vision_documents=vision_documents,
+            fallback_extractions=fallback_extractions,
+            request_id=request_id,
+            settings=resolved_settings,
+            deadline_monotonic=resolved_deadline,
+        )
+        return outcome.partials, outcome.status
+
+    def extract_with_metrics(
+        self,
+        *,
+        chunks: list[dict[str, Any]],
+        vision_documents: list[Any],
+        fallback_extractions: list[dict[str, Any]],
+        request_id: str,
+        settings: PlanningAnalysisSettings,
+        deadline_monotonic: float,
+    ) -> PlanningLLMExtractionOutcome:
         api_key = os.getenv("OPENAI_API_KEY")
         model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
         if not api_key:
@@ -69,65 +116,40 @@ class PlanningLLMExtractionService:
                 model=model,
                 reason="missing_api_key",
             )
-            return fallback_extractions, "SKIPPED_NO_API_KEY"
+            return PlanningLLMExtractionOutcome(
+                text_partials=fallback_extractions,
+                vision_partials=[],
+                status="SKIPPED_NO_API_KEY",
+                call_count=0,
+                timed_out=False,
+                fallback_used=True,
+            )
 
-        results: list[dict[str, Any]] = []
+        text_results: list[dict[str, Any]] = []
+        vision_results: list[dict[str, Any]] = []
         used_fallback = False
+        timed_out = False
         call_index = 0
 
-        if chunks:
+        chunk_fallback_pairs = list(zip(
+            chunks,
+            fallback_extractions,
+            strict=True,
+        ))
+        for index, (chunk, fallback) in enumerate(chunk_fallback_pairs):
             try:
+                provider_timeout = self._remaining_provider_timeout(
+                    deadline_monotonic
+                )
                 llm = ChatOpenAI(
                     model=model,
                     temperature=0,
                     api_key=api_key,
-                    timeout=60,
-                    max_retries=2,
+                    timeout=provider_timeout,
+                    max_retries=(
+                        settings.planning_analysis_retry_count
+                    ),
                 ).with_structured_output(DocumentChunkExtraction)
-                for chunk, fallback in zip(chunks, fallback_extractions, strict=True):
-                    call_index += 1
-                    started_at = perf_counter()
-                    self._audit(
-                        "provider_call_started",
-                        request_id=request_id,
-                        model=model,
-                        call_index=call_index,
-                    )
-                    try:
-                        result = llm.invoke([
-                            SystemMessage(content=self._instructions()),
-                            HumanMessage(content=json.dumps(chunk, ensure_ascii=False)),
-                        ])
-                        self._audit(
-                            "provider_call_succeeded",
-                            request_id=request_id,
-                            model=model,
-                            call_index=call_index,
-                            latency_ms=self._elapsed_ms(started_at),
-                        )
-                        results.append(self._normalize_result(
-                            result.model_dump(mode="json"),
-                            source_document=chunk["source_document"],
-                            source_text=chunk["text"],
-                        ))
-                    except Exception as exc:
-                        self._audit(
-                            "provider_call_failed",
-                            request_id=request_id,
-                            model=model,
-                            call_index=call_index,
-                            latency_ms=self._elapsed_ms(started_at),
-                            exception_type=type(exc).__name__,
-                        )
-                        self._audit(
-                            "fallback_used",
-                            request_id=request_id,
-                            model=model,
-                            call_index=call_index,
-                            reason="provider_call_failed",
-                        )
-                        results.append(fallback)
-                        used_fallback = True
             except Exception as exc:
                 self._audit(
                     "provider_call_failed",
@@ -141,67 +163,197 @@ class PlanningLLMExtractionService:
                     "fallback_used",
                     request_id=request_id,
                     model=model,
-                    reason="client_initialization_failed",
+                    reason=(
+                        "analysis_timeout"
+                        if self._is_timeout_error(exc)
+                        else "client_initialization_failed"
+                    ),
                 )
-                results.extend(fallback_extractions)
+                text_results.append(fallback)
                 used_fallback = True
+                if self._is_timeout_error(exc):
+                    text_results.extend(
+                        pair[1]
+                        for pair in chunk_fallback_pairs[index + 1:]
+                    )
+                    timed_out = True
+                    break
+                continue
 
-        if vision_documents:
+            call_index += 1
+            started_at = perf_counter()
+            self._audit(
+                "provider_call_started",
+                request_id=request_id,
+                model=model,
+                call_index=call_index,
+            )
             try:
-                client = OpenAI(api_key=api_key, timeout=120, max_retries=2)
-                for document in vision_documents:
-                    call_index += 1
-                    started_at = perf_counter()
-                    self._audit(
-                        "provider_call_started",
-                        request_id=request_id,
-                        model=model,
-                        call_index=call_index,
-                    )
-                    try:
-                        results.append(self._extract_pdf_with_vision(client, document))
-                        self._audit(
-                            "provider_call_succeeded",
-                            request_id=request_id,
-                            model=model,
-                            call_index=call_index,
-                            latency_ms=self._elapsed_ms(started_at),
-                        )
-                    except Exception as exc:
-                        self._audit(
-                            "provider_call_failed",
-                            request_id=request_id,
-                            model=model,
-                            call_index=call_index,
-                            latency_ms=self._elapsed_ms(started_at),
-                            exception_type=type(exc).__name__,
-                        )
-                        self._audit(
-                            "fallback_used",
-                            request_id=request_id,
-                            model=model,
-                            call_index=call_index,
-                            reason="provider_call_failed",
-                        )
-                        used_fallback = True
+                result = llm.invoke([
+                    SystemMessage(content=self._instructions()),
+                    HumanMessage(
+                        content=json.dumps(chunk, ensure_ascii=False)
+                    ),
+                ])
+                self._audit(
+                    "provider_call_succeeded",
+                    request_id=request_id,
+                    model=model,
+                    call_index=call_index,
+                    latency_ms=self._elapsed_ms(started_at),
+                )
+                text_results.append(self._normalize_result(
+                    result.model_dump(mode="json"),
+                    source_document=chunk["source_document"],
+                    source_text=chunk["text"],
+                ))
             except Exception as exc:
                 self._audit(
                     "provider_call_failed",
                     request_id=request_id,
                     model=model,
-                    call_index=0,
+                    call_index=call_index,
+                    latency_ms=self._elapsed_ms(started_at),
                     exception_type=type(exc).__name__,
-                    phase="client_initialization",
                 )
                 self._audit(
                     "fallback_used",
                     request_id=request_id,
                     model=model,
-                    reason="client_initialization_failed",
+                    call_index=call_index,
+                    reason=(
+                        "analysis_timeout"
+                        if self._is_timeout_error(exc)
+                        else "provider_call_failed"
+                    ),
                 )
+                text_results.append(fallback)
                 used_fallback = True
+                if self._is_timeout_error(exc):
+                    text_results.extend(
+                        pair[1]
+                        for pair in chunk_fallback_pairs[index + 1:]
+                    )
+                    timed_out = True
+                    break
 
-        return results, "FALLBACK" if used_fallback else "SUCCEEDED"
+        if not timed_out:
+            for document in vision_documents:
+                try:
+                    provider_timeout = self._remaining_provider_timeout(
+                        deadline_monotonic
+                    )
+                    client = OpenAI(
+                        api_key=api_key,
+                        timeout=provider_timeout,
+                        max_retries=(
+                            settings.planning_analysis_retry_count
+                        ),
+                    )
+                except Exception as exc:
+                    self._audit(
+                        "provider_call_failed",
+                        request_id=request_id,
+                        model=model,
+                        call_index=0,
+                        exception_type=type(exc).__name__,
+                        phase="client_initialization",
+                    )
+                    self._audit(
+                        "fallback_used",
+                        request_id=request_id,
+                        model=model,
+                        reason=(
+                            "analysis_timeout"
+                            if self._is_timeout_error(exc)
+                            else "client_initialization_failed"
+                        ),
+                    )
+                    used_fallback = True
+                    if self._is_timeout_error(exc):
+                        timed_out = True
+                        break
+                    continue
+
+                call_index += 1
+                started_at = perf_counter()
+                self._audit(
+                    "provider_call_started",
+                    request_id=request_id,
+                    model=model,
+                    call_index=call_index,
+                )
+                try:
+                    vision_results.append(
+                        self._extract_pdf_with_vision(client, document)
+                    )
+                    self._audit(
+                        "provider_call_succeeded",
+                        request_id=request_id,
+                        model=model,
+                        call_index=call_index,
+                        latency_ms=self._elapsed_ms(started_at),
+                    )
+                except Exception as exc:
+                    self._audit(
+                        "provider_call_failed",
+                        request_id=request_id,
+                        model=model,
+                        call_index=call_index,
+                        latency_ms=self._elapsed_ms(started_at),
+                        exception_type=type(exc).__name__,
+                    )
+                    self._audit(
+                        "fallback_used",
+                        request_id=request_id,
+                        model=model,
+                        call_index=call_index,
+                        reason=(
+                            "analysis_timeout"
+                            if self._is_timeout_error(exc)
+                            else "provider_call_failed"
+                        ),
+                    )
+                    used_fallback = True
+                    if self._is_timeout_error(exc):
+                        timed_out = True
+                        break
+
+        return PlanningLLMExtractionOutcome(
+            text_partials=text_results,
+            vision_partials=vision_results,
+            status="FALLBACK" if used_fallback else "SUCCEEDED",
+            call_count=call_index,
+            timed_out=timed_out,
+            fallback_used=used_fallback,
+        )
+
+    def _remaining_provider_timeout(
+        self,
+        deadline_monotonic: float,
+    ) -> float:
+        completion_reserve_seconds = 0.25
+        remaining = (
+            deadline_monotonic
+            - perf_counter()
+            - completion_reserve_seconds
+        )
+        if remaining <= 0:
+            raise TimeoutError("planning analysis deadline reached")
+        return remaining
+
+    def _is_timeout_error(self, exception: Exception) -> bool:
+        current: BaseException | None = exception
+        visited: set[int] = set()
+        while current is not None and id(current) not in visited:
+            visited.add(id(current))
+            if (
+                isinstance(current, TimeoutError)
+                or "timeout" in type(current).__name__.casefold()
+            ):
+                return True
+            current = current.__cause__ or current.__context__
+        return False
 
     def _elapsed_ms(self, started_at: float) -> int:
         return round((perf_counter() - started_at) * 1000)

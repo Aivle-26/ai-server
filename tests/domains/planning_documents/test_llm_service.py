@@ -21,6 +21,15 @@ CHUNK = {
     "chunk_index": 1,
     "text": "Users can log in.",
 }
+SECOND_CHUNK = {
+    "source_document": "rfp.txt",
+    "chunk_index": 2,
+    "text": "The system must protect user data.",
+}
+SECOND_FALLBACK = {
+    "project_info": {"project_name": "Second fallback"},
+    "requirements": [],
+}
 
 
 class PlanningDocumentLlmServiceTest(unittest.TestCase):
@@ -121,14 +130,26 @@ class PlanningDocumentLlmServiceTest(unittest.TestCase):
             patch(
                 "app.domains.planning_documents.llm_service.ChatOpenAI",
                 return_value=chat,
-            ),
+            ) as chat_factory,
         ):
             results, status = self.service.extract(
-                [CHUNK], [], [FALLBACK]
+                [CHUNK, SECOND_CHUNK],
+                [],
+                [FALLBACK, SECOND_FALLBACK],
             )
 
-        self.assertEqual(results, [FALLBACK])
+        self.assertEqual(results, [FALLBACK, SECOND_FALLBACK])
         self.assertEqual(status, "FALLBACK")
+        self.assertEqual(structured.invoke.call_count, 1)
+        self.assertEqual(chat_factory.call_count, 1)
+        self.assertEqual(
+            chat_factory.call_args.kwargs["max_retries"],
+            0,
+        )
+        self.assertLessEqual(
+            chat_factory.call_args.kwargs["timeout"],
+            180,
+        )
 
     def test_failure_audit_omits_exception_message_and_input_content(self):
         structured = MagicMock()
@@ -177,6 +198,33 @@ class PlanningDocumentLlmServiceTest(unittest.TestCase):
 
         self.assertEqual(results, [])
         self.assertEqual(status, "FALLBACK")
+
+    def test_vision_client_disables_sdk_retries(self):
+        document = ParsedDocument(
+            "scan.pdf", "PDF", "", b"%PDF", "PDF_VISION"
+        )
+        service = PlanningLLMExtractionService()
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENAI_API_KEY": "test-key"},
+                clear=True,
+            ),
+            patch(
+                "app.domains.planning_documents.llm_service.OpenAI"
+            ) as openai,
+            patch.object(
+                service,
+                "_extract_pdf_with_vision",
+                return_value=FALLBACK,
+            ),
+        ):
+            results, status = service.extract([], [document], [])
+
+        self.assertEqual(results, [FALLBACK])
+        self.assertEqual(status, "SUCCEEDED")
+        self.assertEqual(openai.call_count, 1)
+        self.assertEqual(openai.call_args.kwargs["max_retries"], 0)
 
     def test_vision_none_output_is_rejected_and_store_is_disabled(self):
         responses = MagicMock()
