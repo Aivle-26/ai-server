@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import re
 from datetime import date
 from time import perf_counter
 from typing import Any, Literal
@@ -34,6 +35,11 @@ class ExtractedProjectInfo(BaseModel):
     security_privacy_conditions: list[str] = Field(default_factory=list)
 
 
+class ExtractedEvidenceReference(BaseModel):
+    chunk_id: str
+    quote_text: str
+
+
 class ExtractedRequirement(BaseModel):
     function_name: str
     requirement_text: str
@@ -43,8 +49,9 @@ class ExtractedRequirement(BaseModel):
     due_date: date | None = None
     deliverable_name: str | None = None
     security_condition: str | None = None
-    source_document: str
+    source_document: str | None = None
     source_excerpt: str | None = None
+    evidences: list[ExtractedEvidenceReference] = Field(default_factory=list)
 
 
 class DocumentChunkExtraction(BaseModel):
@@ -74,6 +81,11 @@ class PlanningLLMExtractionService:
         results: list[dict[str, Any]] = []
         used_fallback = False
         call_index = 0
+        chunk_by_id = {
+            str(chunk["chunk_id"]): chunk
+            for chunk in chunks
+            if chunk.get("chunk_id")
+        }
 
         if chunks:
             try:
@@ -109,6 +121,7 @@ class PlanningLLMExtractionService:
                             result.model_dump(mode="json"),
                             source_document=chunk["source_document"],
                             source_text=chunk["text"],
+                            chunk_by_id=chunk_by_id,
                         ))
                     except Exception as exc:
                         self._audit(
@@ -276,6 +289,7 @@ class PlanningLLMExtractionService:
             response.output_parsed.model_dump(mode="json"),
             source_document=document.file_name,
             source_text=None,
+            chunk_by_id={},
         )
 
     def _normalize_result(
@@ -283,16 +297,98 @@ class PlanningLLMExtractionService:
         extracted: dict[str, Any],
         source_document: str,
         source_text: str | None,
+        chunk_by_id: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        chunk_by_id = chunk_by_id or {}
         for requirement in extracted["requirements"]:
             requirement["source_document"] = source_document
             excerpt = requirement.get("source_excerpt")
             if source_text is not None and excerpt and excerpt not in source_text:
                 requirement["source_excerpt"] = None
+            validated_evidences = []
+            for reference in requirement.get("evidences") or []:
+                evidence = self._resolve_evidence(reference, chunk_by_id)
+                if evidence is not None:
+                    validated_evidences.append(evidence)
+            requirement["evidences"] = validated_evidences
+            if validated_evidences:
+                requirement["source_document"] = validated_evidences[0][
+                    "source_document"
+                ]
+                requirement["source_excerpt"] = validated_evidences[0][
+                    "quote_text"
+                ]
         return extracted
+
+    def _resolve_evidence(
+        self,
+        reference: dict[str, Any],
+        chunk_by_id: dict[str, dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        chunk_id = str(reference.get("chunk_id") or "").strip()
+        quote_text = str(reference.get("quote_text") or "").strip()
+        chunk = chunk_by_id.get(chunk_id)
+        if chunk is None or not quote_text:
+            return None
+
+        span = self._find_normalized_span(chunk["text"], quote_text)
+        if span is None:
+            return None
+        start, end = span
+        chunk_start = int(chunk.get("start_offset") or 0)
+        return {
+            "document_id": chunk.get("document_id"),
+            "source_document": chunk["source_document"],
+            "page_number": chunk.get("page_number"),
+            "chunk_id": chunk_id,
+            "quote_text": chunk["text"][start:end],
+            "start_offset": chunk_start + start,
+            "end_offset": chunk_start + end,
+            "bounding_boxes": [],
+        }
+
+    def _find_normalized_span(
+        self,
+        source_text: str,
+        quote_text: str,
+    ) -> tuple[int, int] | None:
+        normalized_source, source_indexes = self._normalize_with_indexes(
+            source_text
+        )
+        normalized_quote = re.sub(r"\s+", " ", quote_text).strip()
+        if not normalized_quote:
+            return None
+        normalized_start = normalized_source.find(normalized_quote)
+        if normalized_start < 0:
+            return None
+        normalized_end = normalized_start + len(normalized_quote)
+        return (
+            source_indexes[normalized_start],
+            source_indexes[normalized_end - 1] + 1,
+        )
+
+    def _normalize_with_indexes(self, value: str) -> tuple[str, list[int]]:
+        characters: list[str] = []
+        indexes: list[int] = []
+        pending_space_index: int | None = None
+        for index, character in enumerate(value):
+            if character.isspace():
+                if characters:
+                    pending_space_index = index
+                continue
+            if pending_space_index is not None and characters:
+                characters.append(" ")
+                indexes.append(pending_space_index)
+            characters.append(character)
+            indexes.append(index)
+            pending_space_index = None
+        return "".join(characters), indexes
 
     def _instructions(self) -> str:
         return (
+            "입력 청크에 포함된 chunk_id를 그대로 사용하세요. 각 요구사항의 evidences에는 "
+            "근거가 실제로 존재하는 chunk_id와 해당 청크의 원문 quote_text만 반환하세요. "
+            "document_id, page_number, offset, bounding box는 추측하거나 생성하지 마세요. "
             "당신은 IT 프로젝트 기획 문서 분석가입니다. 제공된 원문에 명시된 사실만 추출하세요. "
             "추론하거나 없는 날짜·조건을 만들지 마세요. 요구사항은 독립적으로 검수 가능한 단위로 "
             "나누고, source_document는 입력 파일명과 정확히 같게 유지하세요. 우선순위가 명시되지 "

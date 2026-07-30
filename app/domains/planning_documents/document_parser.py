@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import re
 import zlib
 import zipfile
@@ -45,6 +46,13 @@ class UploadedDocument:
     file_name: str
     content_type: str | None
     content: bytes
+    document_id: int | None = None
+
+
+@dataclass(frozen=True)
+class ParsedPage:
+    page_number: int | None
+    text: str
 
 
 @dataclass(frozen=True)
@@ -54,6 +62,8 @@ class ParsedDocument:
     text: str
     content: bytes
     processing_mode: str
+    document_id: int | None = None
+    pages: tuple[ParsedPage, ...] = ()
 
 
 class PlanningDocumentService:
@@ -73,16 +83,36 @@ class PlanningDocumentService:
 
     def build_chunks(self, documents: list[ParsedDocument]) -> list[dict[str, Any]]:
         chunks: list[dict[str, Any]] = []
-        for document in documents:
+        for document_index, document in enumerate(documents, start=1):
             if document.processing_mode != "TEXT":
                 continue
-            text_parts = self._split_text(document.text)
-            for index, text in enumerate(text_parts, start=1):
-                chunks.append({
-                    "source_document": document.file_name,
-                    "chunk_index": index,
-                    "text": text,
-                })
+            pages = document.pages or (ParsedPage(page_number=None, text=document.text),)
+            for page in pages:
+                text_parts = self._split_text_with_offsets(page.text)
+                for index, (text, start_offset, end_offset) in enumerate(
+                    text_parts,
+                    start=1,
+                ):
+                    page_token = page.page_number or "na"
+                    document_token = (
+                        str(document.document_id)
+                        if document.document_id is not None
+                        else self._anonymous_document_token(
+                            document.file_name,
+                            document.content,
+                            document_index,
+                        )
+                    )
+                    chunks.append({
+                        "chunk_id": f"{document_token}:{page_token}:{index}",
+                        "document_id": document.document_id,
+                        "source_document": document.file_name,
+                        "page_number": page.page_number,
+                        "chunk_index": index,
+                        "text": text,
+                        "start_offset": start_offset,
+                        "end_offset": end_offset,
+                    })
         return chunks
 
     def fallback_extract(self, chunk: dict[str, Any]) -> dict[str, Any]:
@@ -119,6 +149,21 @@ class PlanningDocumentService:
                 continue
             cleaned = re.sub(r"^(REQ[-_ ]?\d+|요구사항\s*\d*)\s*[:.\-]?\s*", "", line, flags=re.I)
             cleaned = re.sub(r"^(필수|선택|권고|high|medium|low)\s*[:.\-]?\s*", "", cleaned, flags=re.I)
+            local_offset = text.find(line)
+            evidence = []
+            if local_offset >= 0:
+                chunk_start = int(chunk.get("start_offset") or 0)
+                quote_text = line[:500]
+                evidence.append({
+                    "document_id": chunk.get("document_id"),
+                    "source_document": chunk["source_document"],
+                    "page_number": chunk.get("page_number"),
+                    "chunk_id": chunk.get("chunk_id", ""),
+                    "quote_text": quote_text,
+                    "start_offset": chunk_start + local_offset,
+                    "end_offset": chunk_start + local_offset + len(quote_text),
+                    "bounding_boxes": [],
+                })
             requirements.append({
                 "function_name": self._function_name(cleaned),
                 "requirement_text": cleaned[:1000],
@@ -130,6 +175,7 @@ class PlanningDocumentService:
                 "security_condition": cleaned[:500] if self._is_security_text(cleaned) else None,
                 "source_document": chunk["source_document"],
                 "source_excerpt": line[:500],
+                "evidences": evidence,
             })
         return {"project_info": project_info, "requirements": requirements[:50]}
 
@@ -185,17 +231,30 @@ class PlanningDocumentService:
                 })
 
         requirements = []
-        seen = set()
+        requirement_by_key: dict[str, dict[str, Any]] = {}
         for partial in partials:
             for requirement in partial.get("requirements") or []:
                 text = str(requirement.get("requirement_text") or "").strip()
                 if not text:
                     continue
                 key = re.sub(r"\W+", "", text).lower()
-                if not key or key in seen:
+                if not key:
                     continue
-                seen.add(key)
-                requirements.append({
+                evidences = self._deduplicate_evidences(
+                    requirement.get("evidences") or []
+                )
+                if key in requirement_by_key:
+                    existing = requirement_by_key[key]
+                    existing["evidences"] = self._deduplicate_evidences(
+                        [*existing["evidences"], *evidences]
+                    )
+                    continue
+                source_document = requirement.get("source_document") or "unknown"
+                source_excerpt = requirement.get("source_excerpt")
+                if evidences:
+                    source_document = evidences[0]["source_document"]
+                    source_excerpt = evidences[0]["quote_text"]
+                consolidated_requirement = {
                     "requirement_id": len(requirements) + 1,
                     "function_name": requirement.get("function_name") or "공통",
                     "requirement_text": text,
@@ -205,9 +264,12 @@ class PlanningDocumentService:
                     "due_date": requirement.get("due_date"),
                     "deliverable_name": requirement.get("deliverable_name"),
                     "security_condition": requirement.get("security_condition"),
-                    "source_document": requirement.get("source_document") or "unknown",
-                    "source_excerpt": requirement.get("source_excerpt"),
-                })
+                    "source_document": source_document,
+                    "source_excerpt": source_excerpt,
+                    "evidences": evidences,
+                }
+                requirements.append(consolidated_requirement)
+                requirement_by_key[key] = consolidated_requirement
         return {"project_info": project_info, "requirement_candidates": requirements[:200]}
 
     def _parse_document(self, upload: UploadedDocument) -> ParsedDocument:
@@ -232,14 +294,22 @@ class PlanningDocumentService:
         }
         try:
             if suffix == ".pdf":
-                text, page_count = self._extract_pdf(upload.content)
-                text = self._clean_text(text)
+                pages = tuple(
+                    ParsedPage(page_number=index, text=self._clean_text(page_text))
+                    for index, page_text in enumerate(
+                        self._extract_pdf_pages(upload.content),
+                        start=1,
+                    )
+                )
+                text = "\n".join(page.text for page in pages).strip()
+                page_count = len(pages)
                 processing_mode = (
                     "TEXT" if self._has_sufficient_pdf_text(text, page_count) else "PDF_VISION"
                 )
             else:
                 text = self._clean_text(extractors[suffix](upload.content))
                 processing_mode = "TEXT"
+                pages = (ParsedPage(page_number=None, text=text),)
         except DocumentExtractionError:
             raise
         except Exception as exc:
@@ -254,11 +324,17 @@ class PlanningDocumentService:
             text=text,
             content=upload.content,
             processing_mode=processing_mode,
+            document_id=upload.document_id,
+            pages=pages,
         )
 
     def _extract_pdf(self, content: bytes) -> tuple[str, int]:
+        pages = self._extract_pdf_pages(content)
+        return "\n".join(pages), len(pages)
+
+    def _extract_pdf_pages(self, content: bytes) -> list[str]:
         reader = PdfReader(io.BytesIO(content))
-        return "\n".join(page.extract_text() or "" for page in reader.pages), len(reader.pages)
+        return [page.extract_text() or "" for page in reader.pages]
 
     def _has_sufficient_pdf_text(self, text: str, page_count: int) -> bool:
         meaningful_characters = len(re.sub(r"\s+", "", text))
@@ -337,26 +413,92 @@ class PlanningDocumentService:
         raise DocumentExtractionError("텍스트 파일 인코딩은 UTF-8, CP949 또는 UTF-16이어야 합니다.")
 
     def _split_text(self, text: str) -> list[str]:
-        paragraphs = text.splitlines()
-        chunks: list[str] = []
-        current = ""
-        for paragraph in paragraphs:
-            paragraph = paragraph.strip()
-            if not paragraph:
+        return [part for part, _, _ in self._split_text_with_offsets(text)]
+
+    def _split_text_with_offsets(self, text: str) -> list[tuple[str, int, int]]:
+        chunks: list[tuple[str, int, int]] = []
+        cursor = 0
+        text_length = len(text)
+
+        while cursor < text_length:
+            while cursor < text_length and text[cursor].isspace():
+                cursor += 1
+            if cursor >= text_length:
+                break
+
+            hard_end = min(cursor + CHUNK_SIZE, text_length)
+            end = hard_end
+            if hard_end < text_length:
+                line_end = text.rfind("\n", cursor, hard_end + 1)
+                if line_end > cursor:
+                    end = line_end
+
+            while end > cursor and text[end - 1].isspace():
+                end -= 1
+            if end <= cursor:
+                end = hard_end
+
+            chunk_text = text[cursor:end]
+            if chunk_text:
+                chunks.append((chunk_text, cursor, end))
+            cursor = max(end, hard_end if end == cursor else end)
+
+        if not chunks:
+            return [(text[:CHUNK_SIZE], 0, min(len(text), CHUNK_SIZE))]
+        return chunks
+
+    def _anonymous_document_token(
+        self,
+        file_name: str,
+        content: bytes,
+        document_index: int,
+    ) -> str:
+        digest = hashlib.sha256(
+            file_name.casefold().encode("utf-8")
+            + b"\0"
+            + hashlib.sha256(content).digest()
+            + b"\0"
+            + str(document_index).encode("ascii")
+        ).hexdigest()
+        return f"file-{digest[:12]}"
+
+    def _deduplicate_evidences(
+        self,
+        evidences: list[Any],
+    ) -> list[dict[str, Any]]:
+        deduplicated: list[dict[str, Any]] = []
+        seen: set[tuple[Any, Any, str]] = set()
+        for evidence in evidences:
+            if hasattr(evidence, "model_dump"):
+                evidence = evidence.model_dump(mode="json")
+            if not isinstance(evidence, dict):
                 continue
-            if current and len(current) + len(paragraph) + 1 > CHUNK_SIZE:
-                chunks.append(current)
-                current = ""
-            if len(paragraph) > CHUNK_SIZE:
-                if current:
-                    chunks.append(current)
-                    current = ""
-                chunks.extend(paragraph[index:index + CHUNK_SIZE] for index in range(0, len(paragraph), CHUNK_SIZE))
-            else:
-                current = f"{current}\n{paragraph}".strip()
-        if current:
-            chunks.append(current)
-        return chunks or [text[:CHUNK_SIZE]]
+            quote_text = str(evidence.get("quote_text") or "").strip()
+            chunk_id = str(evidence.get("chunk_id") or "").strip()
+            source_document = str(
+                evidence.get("source_document") or ""
+            ).strip()
+            if not quote_text or not chunk_id or not source_document:
+                continue
+            key = (
+                evidence.get("document_id"),
+                evidence.get("page_number"),
+                re.sub(r"\s+", " ", quote_text).casefold(),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduplicated.append({
+                "document_id": evidence.get("document_id"),
+                "source_document": source_document,
+                "page_number": evidence.get("page_number"),
+                "chunk_id": chunk_id,
+                "quote_text": quote_text,
+                "start_offset": evidence.get("start_offset"),
+                "end_offset": evidence.get("end_offset"),
+                "bounding_boxes": evidence.get("bounding_boxes") or [],
+            })
+        return deduplicated
 
     def _clean_text(self, text: str) -> str:
         text = text.replace("\u00a0", " ").replace("\x00", "")
