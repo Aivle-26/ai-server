@@ -141,7 +141,7 @@ class PlanningDocumentGraphTest(unittest.TestCase):
             [requirement["category"] for requirement in result["requirement_candidates"]],
             ["PROJECT_MANAGEMENT", "FUNCTIONAL", "SECURITY"],
         )
-        self.assertEqual(result["llm_status"], "SKIPPED_NO_API_KEY")
+        self.assertEqual(result["llm_status"], "FALLBACK")
 
     def test_graph_uses_structured_llm_result(self):
         graph = PlanningDocumentGraph(llm_service=FakeLLMService())

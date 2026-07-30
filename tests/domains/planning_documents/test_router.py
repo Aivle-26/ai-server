@@ -55,7 +55,7 @@ class PlanningDocumentRouterTest(unittest.TestCase):
         self.assertTrue(
             response.headers["content-type"].startswith("application/json")
         )
-        self.assertEqual(response.json()["llm_status"], "SKIPPED_NO_API_KEY")
+        self.assertEqual(response.json()["llm_status"], "FALLBACK")
         self.assertEqual(response.json()["documents"][0]["file_name"], "rfp.txt")
 
     def test_file_count_limit_returns_422_before_graph(self):

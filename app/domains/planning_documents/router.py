@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import unicodedata
@@ -16,6 +17,7 @@ from .document_parser import (
 )
 from .graph import PlanningDocumentGraph
 from .readjustment import RequirementReadjustmentService
+from .settings import PlanningAnalysisSettings
 from .schemas import (
     DocumentManifestItem,
     ExistingRequirement,
@@ -63,9 +65,13 @@ async def extract_planning_documents(
     uploads = await _read_uploads(files, manifest)
 
     try:
-        result = planning_document_graph.invoke(
+        result = await _invoke_graph(
             uploads,
             request_id=request_id,
+            started_at=started_at,
+            max_analysis_inputs=_configured_limit(
+                "planning_max_analysis_chunks"
+            ),
         )
         logger.info(
             "planning_extract_audit %s",
@@ -84,6 +90,9 @@ async def extract_planning_documents(
             ),
         )
         return result
+    except TimeoutError as exc:
+        _log_timeout(request_id, len(uploads), started_at, "extract")
+        raise _analysis_timeout_error() from exc
     except DocumentExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -104,6 +113,8 @@ async def readjust_planning_requirements(
         description="files와 같은 순서의 document_id/file_name JSON 배열",
     ),
 ) -> dict:
+    request_id = uuid4().hex
+    started_at = perf_counter()
     if len(files) > MAX_FILE_COUNT:
         raise HTTPException(
             status_code=422,
@@ -113,11 +124,14 @@ async def readjust_planning_requirements(
     manifest = _parse_document_manifest(document_manifest, files)
     existing = _parse_existing_requirements(existing_requirements)
     uploads = await _read_uploads(files, manifest)
-    request_id = uuid4().hex
     try:
-        extraction = planning_document_graph.invoke(
+        extraction = await _invoke_graph(
             uploads,
             request_id=request_id,
+            started_at=started_at,
+            max_analysis_inputs=_configured_limit(
+                "planning_readjust_max_analysis_chunks"
+            ),
         )
         return {
             "change_candidates": readjustment_service.build_changes(
@@ -127,8 +141,92 @@ async def readjust_planning_requirements(
             "documents": extraction.get("documents") or [],
             "llm_status": extraction.get("llm_status") or "FALLBACK",
         }
+    except TimeoutError as exc:
+        _log_timeout(request_id, len(uploads), started_at, "readjust")
+        raise _analysis_timeout_error() from exc
     except DocumentExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _graph_settings() -> object:
+    settings = getattr(planning_document_graph, "settings", None)
+    if settings is not None:
+        return settings
+    return PlanningAnalysisSettings.from_env()
+
+
+def _configured_limit(name: str) -> int:
+    default_settings = PlanningAnalysisSettings.from_env()
+    return int(getattr(_graph_settings(), name, getattr(default_settings, name)))
+
+
+async def _invoke_graph(
+    uploads: list[UploadedDocument],
+    *,
+    request_id: str,
+    started_at: float,
+    max_analysis_inputs: int,
+) -> dict:
+    settings = _graph_settings()
+    deadline_monotonic = (
+        started_at
+        + float(
+            getattr(
+                settings,
+                "planning_analysis_timeout_seconds",
+                PlanningAnalysisSettings.from_env().planning_analysis_timeout_seconds,
+            )
+        )
+    )
+    remaining_timeout = deadline_monotonic - perf_counter()
+    if remaining_timeout <= 0:
+        raise TimeoutError("planning analysis deadline reached")
+
+    invoke_kwargs: dict[str, object] = {"request_id": request_id}
+    if isinstance(planning_document_graph, PlanningDocumentGraph):
+        invoke_kwargs.update({
+            "started_at": started_at,
+            "deadline_monotonic": deadline_monotonic,
+            "max_analysis_inputs": max_analysis_inputs,
+        })
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            planning_document_graph.invoke,
+            uploads,
+            **invoke_kwargs,
+        ),
+        timeout=remaining_timeout,
+    )
+
+
+def _analysis_timeout_error() -> HTTPException:
+    return HTTPException(
+        status_code=504,
+        detail="문서 분석 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.",
+    )
+
+
+def _log_timeout(
+    request_id: str,
+    document_count: int,
+    started_at: float,
+    operation: str,
+) -> None:
+    logger.warning(
+        "planning_extract_audit %s",
+        json.dumps(
+            {
+                "event": "planning_analysis_timed_out",
+                "operation": operation,
+                "request_id": request_id,
+                "document_count": document_count,
+                "latency_ms": round((perf_counter() - started_at) * 1000),
+                "timed_out": True,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+    )
 
 
 def _parse_document_manifest(
