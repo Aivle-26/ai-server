@@ -1,11 +1,15 @@
 import io
 import importlib
+import os
+import threading
+import time
 import unittest
 import zipfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+import pymupdf
 from pypdf import PdfWriter
 
 from app.domains.planning_documents.graph import PlanningDocumentGraph
@@ -18,6 +22,10 @@ from app.domains.planning_documents.llm_service import (
     DocumentChunkExtraction,
     ExtractedProjectInfo,
     PlanningLLMExtractionService,
+)
+from app.domains.planning_documents.quality import (
+    RequirementQualityValidator,
+    RequirementSentenceNormalizer,
 )
 
 
@@ -79,6 +87,139 @@ class FakeVisionLLMService:
         }], "SUCCEEDED"
 
 
+class FakeRepairingLLMService:
+    def __init__(self):
+        self.repair_input = []
+
+    def extract(self, chunks, vision_documents, fallback_extractions):
+        return [{
+            "project_info": fallback_extractions[0]["project_info"],
+            "requirements": [
+                {
+                    "function_name": "학습 현황 조회",
+                    "requirement_text": "학생별 학습 현황을 조회할 수 있어야 한다.",
+                    "category": "FUNCTIONAL",
+                    "priority": "HIGH",
+                    "acceptance_criteria": None,
+                    "due_date": None,
+                    "deliverable_name": None,
+                    "security_condition": None,
+                    "source_document": "RFP.txt",
+                    "source_excerpt": "시스템은 학생별 학습 현황 대시보드를 제공해야 한다.",
+                },
+                {
+                    "function_name": "번호SIR",
+                    "requirement_text": (
+                        "요구사항명칭 요구사항분류 요구사항상세설명 "
+                        "SIR-001 개인정보 처리 SIR-002 접근권한 관리"
+                    ),
+                    "category": "UNSPECIFIED",
+                    "priority": "UNSPECIFIED",
+                    "acceptance_criteria": None,
+                    "due_date": None,
+                    "deliverable_name": None,
+                    "security_condition": None,
+                    "source_document": "RFP.txt",
+                    "source_excerpt": None,
+                },
+            ],
+        }], "SUCCEEDED"
+
+    def repair_requirements(self, requirements, validation_errors, source_texts):
+        self.repair_input = requirements
+        original_id = requirements[0]["requirement_id"]
+        return [{
+            "original_requirement_id": original_id,
+            "function_name": "개인정보 암호화",
+            "requirement_text": "개인정보를 저장할 때 암호화해야 한다.",
+            "category": "SECURITY",
+            "priority": "UNSPECIFIED",
+            "acceptance_criteria": None,
+            "due_date": None,
+            "deliverable_name": None,
+            "security_condition": "개인정보 암호화",
+            "source_document": "RFP.txt",
+            "source_excerpt": "시스템은 개인정보를 저장할 때 암호화해야 한다.",
+        }], True
+
+
+class FakeEmptyRepairingLLMService(FakeRepairingLLMService):
+    def repair_requirements(self, requirements, validation_errors, source_texts):
+        self.repair_input = requirements
+        return [], True
+
+
+class FakeInvalidRepairingLLMService(FakeRepairingLLMService):
+    def repair_requirements(self, requirements, validation_errors, source_texts):
+        self.repair_input = requirements
+        original_id = requirements[0]["requirement_id"]
+        return [{
+            "original_requirement_id": original_id,
+            "function_name": "공통",
+            "requirement_text": "SIR-001 개인정보 처리 SIR-002 접근권한 관리",
+            "category": "UNSPECIFIED",
+            "priority": "UNSPECIFIED",
+            "acceptance_criteria": None,
+            "due_date": None,
+            "deliverable_name": None,
+            "security_condition": None,
+            "source_document": "RFP.txt",
+            "source_excerpt": None,
+        }], True
+
+
+class WarningOnlyLLMService:
+    def __init__(self):
+        self.repair_called = False
+
+    def extract(self, chunks, vision_documents, fallback_extractions):
+        return [{
+            "project_info": fallback_extractions[0]["project_info"],
+            "requirements": [{
+                "function_name": "학습 현황 조회",
+                "requirement_text": "학생별 학습 현황을 조회할 수 있어야 한다.",
+                "category": "FUNCTIONAL",
+                "priority": "UNSPECIFIED",
+                "acceptance_criteria": None,
+                "due_date": None,
+                "deliverable_name": None,
+                "security_condition": None,
+                "source_document": "RFP.txt",
+                "source_excerpt": None,
+            }],
+        }], "SUCCEEDED"
+
+    def repair_requirements(self, requirements, validation_errors, source_texts):
+        self.repair_called = True
+        return [], False
+
+
+class ConcurrentStructuredLLM:
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def invoke(self, messages):
+        with self.lock:
+            type(self).active += 1
+            type(self).max_active = max(type(self).max_active, type(self).active)
+        time.sleep(0.05)
+        with self.lock:
+            type(self).active -= 1
+        return DocumentChunkExtraction(
+            project_info=ExtractedProjectInfo(project_name="병렬 추출 프로젝트"),
+            requirements=[],
+        )
+
+
+class FakeChatOpenAI:
+    def __init__(self, **kwargs):
+        pass
+
+    def with_structured_output(self, schema):
+        return ConcurrentStructuredLLM()
+
+
 class CapturingResponses:
     def __init__(self):
         self.request = None
@@ -136,6 +277,190 @@ class PlanningDocumentGraphTest(unittest.TestCase):
             "대시보드 조회 테스트 통과",
         )
 
+    def test_graph_repairs_only_invalid_requirement(self):
+        llm_service = FakeRepairingLLMService()
+        result = PlanningDocumentGraph(llm_service=llm_service).invoke([self.upload])
+
+        self.assertEqual(len(llm_service.repair_input), 1)
+        self.assertEqual(llm_service.repair_input[0]["function_name"], "번호SIR")
+        self.assertEqual(
+            [item["function_name"] for item in result["requirement_candidates"]],
+            ["학습 현황 조회", "개인정보 암호화"],
+        )
+        self.assertEqual(
+            set(result),
+            {"project_info", "requirement_candidates", "documents", "llm_status"},
+        )
+
+    def test_empty_repair_result_keeps_original_requirement(self):
+        result = PlanningDocumentGraph(
+            llm_service=FakeEmptyRepairingLLMService()
+        ).invoke([self.upload])
+
+        self.assertEqual(result["llm_status"], "FALLBACK")
+        self.assertEqual(len(result["requirement_candidates"]), 2)
+        self.assertEqual(
+            result["requirement_candidates"][1]["function_name"],
+            "번호SIR",
+        )
+
+    def test_invalid_repair_result_keeps_original_requirement(self):
+        result = PlanningDocumentGraph(
+            llm_service=FakeInvalidRepairingLLMService()
+        ).invoke([self.upload])
+
+        self.assertEqual(result["llm_status"], "FALLBACK")
+        self.assertEqual(len(result["requirement_candidates"]), 2)
+        self.assertEqual(
+            result["requirement_candidates"][1]["function_name"],
+            "번호SIR",
+        )
+
+    def test_missing_source_excerpt_is_warning_and_does_not_trigger_repair(self):
+        llm_service = WarningOnlyLLMService()
+
+        result = PlanningDocumentGraph(llm_service=llm_service).invoke([self.upload])
+
+        self.assertFalse(llm_service.repair_called)
+        self.assertEqual(result["llm_status"], "SUCCEEDED")
+        self.assertEqual(len(result["requirement_candidates"]), 1)
+        self.assertIsNone(result["requirement_candidates"][0]["source_excerpt"])
+
+    def test_source_excerpt_mismatch_is_warning_not_error(self):
+        issues = RequirementQualityValidator().validate(
+            [{
+                "requirement_id": 1,
+                "function_name": "학습 현황 조회",
+                "requirement_text": "학생별 학습 현황을 조회할 수 있어야 한다.",
+                "source_document": "RFP.txt",
+                "source_excerpt": "표현이 조금 다른 근거 문장",
+            }],
+            {"RFP.txt": "시스템은 학생별 학습 현황을 조회할 수 있어야 한다."},
+        )
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].errors, ())
+        self.assertIn(
+            "판단 근거가 원본 문서에서 정확히 확인되지 않습니다.",
+            issues[0].warnings,
+        )
+
+    def test_inline_bullets_and_requirement_codes_create_separate_blocks(self):
+        service = PlanningDocumentService()
+        upload = UploadedDocument(
+            file_name="inline.txt",
+            content_type="text/plain",
+            content=(
+                "❍음향 정보를 조회해야 한다."
+                "❍주파수를 시각화해야 한다. "
+                "SIR-001 개인정보를 암호화해야 한다."
+            ).encode("utf-8"),
+        )
+
+        chunks = service.build_chunks(service.parse_documents([upload]))
+        blocks = [block for chunk in chunks for block in chunk["blocks"]]
+
+        self.assertEqual(
+            [block["block_type"] for block in blocks],
+            ["BULLET", "BULLET", "REQUIREMENT_CODE"],
+        )
+        self.assertEqual(blocks[-1]["requirement_code"], "SIR-001")
+
+    def test_thirteen_thousand_characters_are_batched_into_one_chunk(self):
+        service = PlanningDocumentService()
+        text = "A" * 13_140
+        upload = UploadedDocument(
+            file_name="medium.txt",
+            content_type="text/plain",
+            content=text.encode("utf-8"),
+        )
+
+        chunks = service.build_chunks(service.parse_documents([upload]))
+
+        self.assertEqual(len(chunks), 1)
+        self.assertLessEqual(len(chunks[0]["text"]), 20_000)
+
+    def test_text_chunks_are_extracted_with_two_workers(self):
+        ConcurrentStructuredLLM.active = 0
+        ConcurrentStructuredLLM.max_active = 0
+        chunks = [
+            {
+                "source_document": "RFP.txt",
+                "chunk_index": index,
+                "blocks": [],
+                "text": f"청크 {index}",
+            }
+            for index in range(1, 3)
+        ]
+        fallbacks = [
+            {"project_info": {}, "requirements": []}
+            for _ in chunks
+        ]
+
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}),
+            patch(
+                "app.domains.planning_documents.llm_service.ChatOpenAI",
+                FakeChatOpenAI,
+            ),
+        ):
+            results, status = PlanningLLMExtractionService().extract(
+                chunks=chunks,
+                vision_documents=[],
+                fallback_extractions=fallbacks,
+            )
+
+        self.assertEqual(status, "SUCCEEDED")
+        self.assertEqual(len(results), 2)
+        self.assertEqual(ConcurrentStructuredLLM.max_active, 2)
+
+    def test_sentence_normalization_keeps_source_excerpt(self):
+        normalized = RequirementSentenceNormalizer().normalize([{
+            "requirement_id": 1,
+            "function_name": "❍ 누수 위치 조회",
+            "requirement_text": "SIR-001  누수 위치를 조회할 수 있도록 구현하다...",
+            "category": "FUNCTIONAL",
+            "priority": "UNSPECIFIED",
+            "acceptance_criteria": None,
+            "due_date": None,
+            "deliverable_name": None,
+            "security_condition": None,
+            "source_document": "RFP.pdf",
+            "source_excerpt": "  ❍누수 위치를 조회할 수 있도록 구현하다.  ",
+        }])
+
+        self.assertEqual(normalized[0]["function_name"], "누수 위치 조회")
+        self.assertEqual(
+            normalized[0]["requirement_text"],
+            "누수 위치를 조회할 수 있도록 구현한다.",
+        )
+        self.assertEqual(
+            normalized[0]["source_excerpt"],
+            "❍누수 위치를 조회할 수 있도록 구현하다.",
+        )
+
+    def test_repair_source_context_finds_requirement_code(self):
+        service = PlanningLLMExtractionService()
+        source_text = (
+            ("앞 문맥 " * 300)
+            + "REQ-001 시스템은 누수 위치를 조회할 수 있어야 한다."
+            + ("뒤 문맥 " * 300)
+        )
+        requirement = {
+            "source_document": "RFP.txt",
+            "source_excerpt": None,
+            "requirement_text": "REQ-001 누수 위치 조회 요구사항",
+            "function_name": "누수 위치 조회",
+        }
+
+        context = service._source_context(
+            requirement,
+            {"RFP.txt": source_text},
+        )
+
+        self.assertIn("REQ-001 시스템은 누수 위치를 조회할 수 있어야 한다.", context)
+        self.assertLessEqual(len(context), 2_000)
+
     def test_hwpx_text_is_supported(self):
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
@@ -167,6 +492,24 @@ class PlanningDocumentGraphTest(unittest.TestCase):
         self.assertEqual(result["project_info"]["project_name"], "스캔 PDF 프로젝트")
         self.assertEqual(result["requirement_candidates"][0]["source_document"], "scanned-rfp.pdf")
         self.assertEqual(result["requirement_candidates"][0]["category"], "FUNCTIONAL")
+
+    def test_text_pdf_uses_layout_block_extraction(self):
+        document = pymupdf.open()
+        page = document.new_page()
+        page.insert_textbox(
+            pymupdf.Rect(72, 72, 520, 300),
+            "Leak detection project requirements and implementation scope " * 5,
+            fontsize=10,
+        )
+        content = document.tobytes()
+        document.close()
+
+        parsed = PlanningDocumentService().parse_documents([
+            UploadedDocument("layout.pdf", "application/pdf", content)
+        ])
+
+        self.assertEqual(parsed[0].processing_mode, "TEXT")
+        self.assertIn("Leak detection project requirements", parsed[0].text)
 
     def test_fallback_classifies_all_requirement_categories(self):
         service = PlanningDocumentService()

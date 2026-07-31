@@ -10,17 +10,23 @@ from typing import Any
 from xml.etree import ElementTree
 
 import olefile
+import pymupdf
 from docx import Document
-from pypdf import PdfReader
 
 
 SUPPORTED_EXTENSIONS = {".pdf", ".hwp", ".hwpx", ".docx", ".txt", ".md", ".csv"}
 MAX_FILE_COUNT = 10
 MAX_FILE_SIZE = 20 * 1024 * 1024
 MAX_TOTAL_CHARACTERS = 200_000
-CHUNK_SIZE = 12_000
+CHUNK_SIZE = 20_000
+GENERIC_BLOCK_SIZE = 4_000
 MIN_PDF_TEXT_CHARACTERS = 100
 MIN_PDF_CHARACTERS_PER_PAGE = 20
+REQUIREMENT_CODE_PATTERN = re.compile(
+    r"(?<![A-Z0-9])(?:REQ|[A-Z]{2,5})[-_ ]\d{2,4}(?!\d)",
+    re.I,
+)
+BULLET_MARKERS = "❍○●•◦▪▫"
 ARTIFACT_DEFINITIONS = (
     ("REQUIREMENTS_DEFINITION", "요구사항 정의서", ("요구사항 정의서", "요구사항정의서")),
     ("FUNCTION_SPECIFICATION", "기능 명세서", ("기능 명세서", "기능명세서")),
@@ -76,11 +82,13 @@ class PlanningDocumentService:
         for document in documents:
             if document.processing_mode != "TEXT":
                 continue
-            text_parts = self._split_text(document.text)
-            for index, text in enumerate(text_parts, start=1):
+            blocks = self._build_blocks(document.text)
+            for index, batch in enumerate(self._batch_blocks(blocks), start=1):
+                text = "\n\n".join(block["text"] for block in batch)
                 chunks.append({
                     "source_document": document.file_name,
                     "chunk_index": index,
+                    "blocks": batch,
                     "text": text,
                 })
         return chunks
@@ -257,8 +265,16 @@ class PlanningDocumentService:
         )
 
     def _extract_pdf(self, content: bytes) -> tuple[str, int]:
-        reader = PdfReader(io.BytesIO(content))
-        return "\n".join(page.extract_text() or "" for page in reader.pages), len(reader.pages)
+        with pymupdf.open(stream=content, filetype="pdf") as document:
+            pages = []
+            for page in document:
+                blocks = page.get_text("blocks", sort=True)
+                pages.append("\n".join(
+                    str(block[4]).strip()
+                    for block in blocks
+                    if len(block) > 4 and str(block[4]).strip()
+                ))
+            return "\n".join(pages), len(document)
 
     def _has_sufficient_pdf_text(self, text: str, page_count: int) -> bool:
         meaningful_characters = len(re.sub(r"\s+", "", text))
@@ -357,6 +373,143 @@ class PlanningDocumentService:
         if current:
             chunks.append(current)
         return chunks or [text[:CHUNK_SIZE]]
+
+    def _build_blocks(self, text: str) -> list[dict[str, Any]]:
+        blocks: list[dict[str, Any]] = []
+        generic_lines: list[str] = []
+
+        def flush_generic() -> None:
+            if not generic_lines:
+                return
+            generic_text = "\n".join(generic_lines).strip()
+            generic_lines.clear()
+            blocks.extend(self._sized_blocks(
+                generic_text,
+                block_type="GENERAL",
+                requirement_code=None,
+                size=GENERIC_BLOCK_SIZE,
+            ))
+
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                flush_generic()
+                continue
+            for segment in self._split_inline_boundaries(line):
+                block_type, requirement_code = self._classify_block(segment)
+                if block_type == "GENERAL":
+                    generic_lines.append(segment)
+                    if len("\n".join(generic_lines)) >= GENERIC_BLOCK_SIZE:
+                        flush_generic()
+                    continue
+                flush_generic()
+                blocks.extend(self._sized_blocks(
+                    segment,
+                    block_type=block_type,
+                    requirement_code=requirement_code,
+                    size=CHUNK_SIZE,
+                ))
+        flush_generic()
+
+        if not blocks:
+            blocks.extend(self._sized_blocks(
+                text,
+                block_type="GENERAL",
+                requirement_code=None,
+                size=GENERIC_BLOCK_SIZE,
+            ))
+        for index, block in enumerate(blocks, start=1):
+            block["block_id"] = index
+        return blocks
+
+    def _split_inline_boundaries(self, line: str) -> list[str]:
+        boundary_pattern = re.compile(
+            rf"(?=[{re.escape(BULLET_MARKERS)}])|"
+            rf"(?={REQUIREMENT_CODE_PATTERN.pattern})",
+            re.I,
+        )
+        return [
+            segment.strip()
+            for segment in boundary_pattern.split(line)
+            if segment.strip()
+        ]
+
+    def _classify_block(self, text: str) -> tuple[str, str | None]:
+        code_match = REQUIREMENT_CODE_PATTERN.match(text)
+        if code_match:
+            code = code_match.group(0).replace("_", "-").replace(" ", "-").upper()
+            return "REQUIREMENT_CODE", code
+        if text[0] in BULLET_MARKERS:
+            return "BULLET", None
+        if "|" in text:
+            return "TABLE_ROW", None
+        if re.match(r"^(?:\d+(?:[.)]|-\d+)|[가-힣][.)])\s*", text):
+            return "NUMBERED_ITEM", None
+        if self._looks_like_requirement(text):
+            return "REQUIREMENT_SENTENCE", None
+        return "GENERAL", None
+
+    def _sized_blocks(
+        self,
+        text: str,
+        block_type: str,
+        requirement_code: str | None,
+        size: int,
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "block_type": block_type,
+                "requirement_code": requirement_code,
+                "text": part,
+            }
+            for part in self._split_by_size(text, size)
+            if part
+        ]
+
+    def _split_by_size(self, text: str, size: int) -> list[str]:
+        if len(text) <= size:
+            return [text.strip()]
+        parts: list[str] = []
+        current = ""
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if current and len(current) + len(line) + 1 > size:
+                parts.append(current)
+                current = ""
+            if len(line) > size:
+                if current:
+                    parts.append(current)
+                    current = ""
+                parts.extend(
+                    line[index:index + size]
+                    for index in range(0, len(line), size)
+                )
+            else:
+                current = f"{current}\n{line}".strip()
+        if current:
+            parts.append(current)
+        return parts or [text[:size]]
+
+    def _batch_blocks(
+        self,
+        blocks: list[dict[str, Any]],
+    ) -> list[list[dict[str, Any]]]:
+        batches: list[list[dict[str, Any]]] = []
+        current: list[dict[str, Any]] = []
+        character_count = 0
+        for block in blocks:
+            block_size = len(block["text"])
+            if current and character_count + block_size + 2 > CHUNK_SIZE:
+                batches.append(current)
+                current = []
+                character_count = 0
+            current.append(block)
+            character_count += block_size + 2
+        if current:
+            batches.append(current)
+        return batches
 
     def _clean_text(self, text: str) -> str:
         text = text.replace("\u00a0", " ").replace("\x00", "")

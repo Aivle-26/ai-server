@@ -1,4 +1,5 @@
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from .document_parser import (
     DocumentExtractionError,
@@ -55,6 +56,6 @@ async def extract_planning_documents(
         )
 
     try:
-        return planning_document_graph.invoke(uploads)
+        return await run_in_threadpool(planning_document_graph.invoke, uploads)
     except DocumentExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
