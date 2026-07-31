@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Literal
 
 from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
@@ -40,17 +42,23 @@ class CommunicationLLMDecisionService:
                 temperature=0,
                 api_key=api_key,
             ).with_structured_output(CommunicationRiskDecision)
-            decision = llm.invoke({
-                "role": "IT project communication risk analyst",
-                "project_name": project_name or "unnamed project",
-                "facts": facts,
-                "instruction": (
+            decision = llm.invoke([
+                SystemMessage(content=(
+                    "You are an IT project communication risk analyst. "
                     "Return HIGH, MEDIUM, or LOW for the project communication risk. "
                     "Use only the supplied facts and candidate messages; do not invent facts. "
                     "Give at most three short Korean reasons, choose evidence_message_ts only "
                     "from candidate_messages, and provide one practical PM action."
-                ),
-            }).model_dump()
+                )),
+                HumanMessage(content=json.dumps(
+                    {
+                        "project_name": project_name or "unnamed project",
+                        "facts": facts,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                )),
+            ]).model_dump()
             valid_ts = {item["message_ts"] for item in facts["candidate_messages"]}
             decision["evidence_message_ts"] = [
                 message_ts
