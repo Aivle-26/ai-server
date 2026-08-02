@@ -5,21 +5,22 @@ from datetime import date
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.domains.planning_wbs.schemas import WBSItemType
+from app.core.api_types import LLMStatus, ProjectId, WbsId
 
 
 class ScheduleWBSItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    wbs_id: int = Field(gt=0)
+    wbs_id: WbsId
     wbs_code: str
-    parent_wbs_id: int | None = None
+    parent_wbs_id: WbsId | None = None
     item_type: WBSItemType
     wbs_name: str
     description: str
 
 
 class PlanningScheduleRequest(BaseModel):
-    project_id: int = Field(gt=0)
+    project_id: ProjectId
     project_start_date: date
     target_end_date: date | None = None
     wbs_items: list[ScheduleWBSItem] = Field(min_length=1, max_length=500)
@@ -89,13 +90,14 @@ class ScheduleDateRange(BaseModel):
 
 
 class WBSScheduleRecommendation(BaseModel):
-    wbs_id: int = Field(gt=0)
+    wbs_id: WbsId
     expected: ScheduleDateRange
     recommended: ScheduleDateRange
     conservative: ScheduleDateRange
 
 
 class PlanningScheduleResponse(BaseModel):
-    project_id: int = Field(gt=0)
+    project_id: ProjectId
     wbs_schedules: list[WBSScheduleRecommendation]
     warnings: list[str] = Field(default_factory=list)
+    llm_status: LLMStatus

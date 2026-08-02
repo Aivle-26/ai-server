@@ -25,6 +25,9 @@ htmlcov/
 # Local project decision notes
 LOCAL_DECISIONS.md
 
+# Local backend integration specification
+docs/backend-ai-api-integration.md
+
 # Editor and operating-system files
 .vscode/
 .idea/

@@ -67,8 +67,11 @@ class PlanningResourceGraph:
         state: PlanningResourceState,
     ) -> dict[str, Any]:
         return {
-            "result": self.resource_service.build_recommendation(
+            "result": {
+                **self.resource_service.build_recommendation(
                 state["request"],
                 state["plans"],
-            )
+                ),
+                "llm_status": "SUCCEEDED",
+            }
         }

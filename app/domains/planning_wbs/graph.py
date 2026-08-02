@@ -100,4 +100,9 @@ class PlanningWBSGraph:
         }
 
     def _build_response(self, state: PlanningWBSState) -> dict[str, Any]:
-        return {"result": state["outcome"].result}
+        return {
+            "result": {
+                **state["outcome"].result,
+                "llm_status": "SUCCEEDED",
+            }
+        }

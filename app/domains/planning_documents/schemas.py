@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.core.api_types import LLMStatus, RequirementId
+
 
 Priority = Literal["HIGH", "MEDIUM", "LOW", "UNSPECIFIED"]
 RequirementCategory = Literal[
@@ -28,7 +30,6 @@ ArtifactType = Literal[
     "FINAL_REPORT",
     "UI_DESIGN",
 ]
-LLMStatus = Literal["SUCCEEDED", "SKIPPED_NO_API_KEY", "FALLBACK"]
 RequirementChangeType = Literal["ADDED", "MODIFIED", "REMOVED", "UNCHANGED"]
 RequirementReviewStatus = Literal["PENDING_REVIEW"]
 
@@ -94,7 +95,7 @@ class ProjectBasicInfo(BaseModel):
 
 
 class RequirementCandidate(BaseModel):
-    requirement_id: int = Field(gt=0)
+    requirement_id: RequirementId
     function_name: str
     requirement_text: str
     category: RequirementCategory = "UNSPECIFIED"
@@ -109,7 +110,7 @@ class RequirementCandidate(BaseModel):
 
 
 class ExistingRequirement(BaseModel):
-    requirement_id: int = Field(gt=0)
+    requirement_id: RequirementId
     function_name: str
     requirement_text: str
     category: RequirementCategory = "UNSPECIFIED"

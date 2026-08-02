@@ -33,7 +33,7 @@ class PlanningScheduleRouterTest(unittest.TestCase):
                 json=schedule_request_payload(),
             )
         self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["detail"], "schedule failed")
+        self.assertEqual(response.json()["message"], "schedule failed")
 
     def test_configuration_failure_maps_to_503(self):
         with patch(

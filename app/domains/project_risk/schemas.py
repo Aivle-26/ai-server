@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.core.api_types import ProjectId, RequirementId
+
 
 RiskLevel = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 
@@ -12,10 +14,10 @@ RiskLevel = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 # =========================================================
 
 class ImpactAssessmentRequest(BaseModel):
-    project_id: int
-    requirement_id: int | None = None
-    change_title: str
-    change_description: str
+    project_id: ProjectId
+    requirement_id: RequirementId | None = None
+    change_title: str = Field(min_length=1, max_length=500)
+    change_description: str = Field(min_length=1, max_length=10_000)
 
     affected_task_count: int = Field(default=0, ge=0)
     affected_member_count: int = Field(default=0, ge=0)
@@ -29,8 +31,8 @@ class ImpactAssessmentRequest(BaseModel):
 
 
 class ImpactAssessmentResponse(BaseModel):
-    project_id: int
-    requirement_id: int | None
+    project_id: ProjectId
+    requirement_id: RequirementId | None
     impact_score: int
     impact_level: RiskLevel
 

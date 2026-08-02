@@ -36,15 +36,15 @@ def weekly_request(*, enable_llm: bool = False):
             "week_end": "2026-07-26",
             "wbs_tasks": [
                 {
-                    "wbs_id": "WBS-1",
+                    "wbs_id": 1,
                     "task_name": "Completed API",
                     "status": "DONE",
                     "progress_rate": 100,
                     "due_date": "2026-07-24",
-                    "assignee_id": "M-1",
+                    "assignee_id": 1,
                 },
                 {
-                    "wbs_id": "WBS-2",
+                    "wbs_id": 2,
                     "task_name": "Delayed UI",
                     "status": "IN_PROGRESS",
                     "progress_rate": 40,
@@ -110,8 +110,8 @@ def rag_request(*, enable_llm: bool = False, question: str = "API status?"):
                     "document_name": "requirements.txt",
                     "text": "The API status endpoint returns service health.",
                     "page": 2,
-                    "requirement_id": "REQ-1",
-                    "wbs_id": "WBS-1",
+                    "requirement_id": 1,
+                    "wbs_id": 1,
                     "review_status": "APPROVED",
                 },
                 {

@@ -33,7 +33,7 @@ class PlanningCostRouterTest(unittest.TestCase):
                 json=cost_request_payload(),
             )
         self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["detail"], "cost failed")
+        self.assertEqual(response.json()["message"], "cost failed")
 
     def test_configuration_failure_maps_to_503(self):
         with patch(

@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.core.api_types import LLMStatus, ProjectId
+
 
 class SlackMessageThreadInput(BaseModel):
     """One row from the slack_message_thread data definition."""
@@ -20,8 +22,8 @@ class SlackMessageThreadInput(BaseModel):
 
 
 class CommunicationRiskRequest(BaseModel):
-    project_id: int = Field(gt=0)
-    project_name: str | None = None
+    project_id: ProjectId
+    project_name: str | None = Field(default=None, min_length=1, max_length=200)
     analysis_end: datetime | None = None
     messages: list[SlackMessageThreadInput] = Field(min_length=1, max_length=10000)
     enable_llm: bool = True
@@ -43,7 +45,7 @@ class CommunicationMetrics(BaseModel):
 
 
 class CommunicationRiskResponse(BaseModel):
-    project_id: int
+    project_id: ProjectId
     project_name: str | None
     communication_risk_level: Literal["HIGH", "MEDIUM", "LOW"]
     reasons: list[str] = Field(min_length=1, max_length=3)
@@ -51,4 +53,4 @@ class CommunicationRiskResponse(BaseModel):
     recommended_action: str
     metrics: CommunicationMetrics
     analysis_window: dict[str, datetime]
-    llm_status: Literal["SUCCEEDED", "SKIPPED_NO_API_KEY", "FALLBACK", "DISABLED"]
+    llm_status: LLMStatus

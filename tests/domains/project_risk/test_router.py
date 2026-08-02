@@ -238,7 +238,7 @@ class ProjectRiskRouterTest(unittest.TestCase):
             },
         )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("완료 업무 수", response.json()["detail"])
+        self.assertIn("완료 업무 수", response.json()["message"])
 
     def test_member_delay_sorts_highest_risk_first(self):
         response = self.client.post(

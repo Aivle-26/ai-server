@@ -9,6 +9,7 @@ from app.domains.planning_documents.schemas import (
     RequiredArtifact,
     RequirementCandidate,
 )
+from app.core.api_types import LLMStatus, WbsId
 
 
 DEFAULT_METHODOLOGY = ["요구사항 분석", "설계", "개발", "테스트", "검수"]
@@ -45,9 +46,9 @@ class WBSGenerationRequest(BaseModel):
 
 
 class WBSItem(BaseModel):
-    wbs_id: int = Field(gt=0)
+    wbs_id: WbsId
     wbs_code: str
-    parent_wbs_id: int | None = None
+    parent_wbs_id: WbsId | None = None
     level: Literal[1, 2, 3]
     sort_order: int = Field(ge=1)
     item_type: WBSItemType
@@ -80,3 +81,4 @@ class WBSGenerationResponse(BaseModel):
     artifact_coverage: ArtifactCoverage
     warnings: list[str] = Field(default_factory=list)
     generation_status: WBSGenerationStatus
+    llm_status: LLMStatus

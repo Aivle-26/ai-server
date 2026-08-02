@@ -194,7 +194,7 @@ class PlanningCostGraphTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 503)
-        self.assertIn("OPENAI_API_KEY", response.json()["detail"])
+        self.assertIn("OPENAI_API_KEY", response.json()["message"])
 
     def test_openapi_describes_cost_endpoint_in_korean(self):
         operation = app.openapi()["paths"][

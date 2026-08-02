@@ -60,8 +60,11 @@ class PlanningScheduleGraph:
         state: PlanningScheduleState,
     ) -> dict[str, Any]:
         return {
-            "result": self.schedule_service.build_schedule(
+            "result": {
+                **self.schedule_service.build_schedule(
                 state["request"],
                 state["plan"],
-            )
+                ),
+                "llm_status": "SUCCEEDED",
+            }
         }

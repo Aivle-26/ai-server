@@ -271,6 +271,7 @@ class PlanningApiPipelineTest(unittest.TestCase):
             )
             self.assertEqual(wbs_response.status_code, 200)
             wbs = wbs_response.json()
+            self.assertEqual(wbs["llm_status"], "SUCCEEDED")
             self.assertEqual(wbs["generation_status"], "SUCCEEDED")
             self.assertEqual(
                 wbs["requirement_coverage"]["coverage_rate"],
@@ -302,6 +303,7 @@ class PlanningApiPipelineTest(unittest.TestCase):
             )
             self.assertEqual(schedule_response.status_code, 200)
             schedule = schedule_response.json()
+            self.assertEqual(schedule["llm_status"], "SUCCEEDED")
             self.assertEqual(
                 len(schedule["wbs_schedules"]),
                 len(wbs["wbs_items"]),
@@ -353,6 +355,7 @@ class PlanningApiPipelineTest(unittest.TestCase):
             )
             self.assertEqual(resource_response.status_code, 200)
             resources = resource_response.json()
+            self.assertEqual(resources["llm_status"], "SUCCEEDED")
             self.assertEqual(len(resources["assignments"]), len(task_items))
             self.assertEqual(resources["unassigned_wbs_ids"], [])
 
@@ -390,6 +393,7 @@ class PlanningApiPipelineTest(unittest.TestCase):
             )
             self.assertEqual(cost_response.status_code, 200)
             cost = cost_response.json()
+            self.assertEqual(cost["llm_status"], "SUCCEEDED")
             self.assertEqual(cost["project_id"], 7)
             self.assertEqual(
                 cost["total_estimated_mm"],

@@ -303,7 +303,7 @@ class PlanningDocumentGraphTest(unittest.TestCase):
             files=[("files", ("RFP.exe", b"not a document", "application/octet-stream"))],
         )
         self.assertEqual(response.status_code, 422)
-        self.assertIn("지원하지 않는 파일 형식", response.json()["detail"])
+        self.assertIn("지원하지 않는 파일 형식", response.json()["message"])
 
     def test_openapi_exposes_files_as_binary_uploads(self):
         schema = app.openapi()

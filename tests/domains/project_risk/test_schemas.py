@@ -6,6 +6,7 @@ from app.domains.project_risk.schemas import (
     ArtifactSecurityResponse,
     CandidateMember,
     CurrentAssignee,
+    ImpactAssessmentRequest,
     MemberTaskStatus,
     RegisteredArtifact,
     ScheduleWBSItem,
@@ -13,6 +14,23 @@ from app.domains.project_risk.schemas import (
 
 
 class ProjectRiskSchemaTest(unittest.TestCase):
+    def test_impact_assessment_requires_positive_ids_and_text(self):
+        base = {
+            "project_id": 1,
+            "change_title": "API change",
+            "change_description": "Update the API contract",
+        }
+        for changes in (
+            {"project_id": 0},
+            {"requirement_id": -1},
+            {"change_title": ""},
+            {"change_description": ""},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(
+                ValidationError
+            ):
+                ImpactAssessmentRequest.model_validate({**base, **changes})
+
     def test_assignee_workload_and_task_counts_are_bounded(self):
         with self.assertRaises(ValidationError):
             CurrentAssignee(

@@ -282,7 +282,7 @@ class PlanningWBSGraphTest(unittest.TestCase):
                 json=sample_request().model_dump(mode="json"),
             )
         self.assertEqual(response.status_code, 503)
-        self.assertIn("OPENAI_API_KEY", response.json()["detail"])
+        self.assertIn("OPENAI_API_KEY", response.json()["message"])
 
     def test_openapi_describes_wbs_in_korean_without_schedule_or_assignee(self):
         schema = app.openapi()

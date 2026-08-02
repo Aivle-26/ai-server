@@ -34,7 +34,7 @@ class PlanningWbsRouterTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["detail"], "generation failed")
+        self.assertEqual(response.json()["message"], "generation failed")
 
     def test_configuration_failure_maps_to_503(self):
         graph = FailingGraph(WBSLLMConfigurationError("missing key"))

@@ -59,7 +59,7 @@ class ReportingRouterTest(unittest.TestCase):
                 "week_end": "2026-07-26",
                 "wbs_tasks": [
                     {
-                        "wbs_id": "W-1",
+                        "wbs_id": 1,
                         "task_name": "Task",
                         "status": "INVALID",
                         "progress_rate": 0,

@@ -71,7 +71,7 @@ class PlanningDocumentRouterTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 422)
-        self.assertIn("최대 1개", response.json()["detail"])
+        self.assertIn("최대 1개", response.json()["message"])
 
     def test_file_size_limit_returns_413(self):
         with patch(
@@ -83,7 +83,7 @@ class PlanningDocumentRouterTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 413)
-        self.assertIn("20MB", response.json()["detail"])
+        self.assertIn("20MB", response.json()["message"])
 
     def test_document_error_maps_to_422(self):
         with patch(
@@ -96,7 +96,7 @@ class PlanningDocumentRouterTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 422)
-        self.assertEqual(response.json()["detail"], "invalid document")
+        self.assertEqual(response.json()["message"], "invalid document")
 
     def test_request_id_is_generated_and_logged_with_completion_status(self):
         graph = CapturingGraph()

@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.api_types import LLMStatus, ProjectId, WbsId
+
 
 ServiceScale = Literal["SMALL", "MEDIUM", "LARGE"]
 PotentialCostType = Literal[
@@ -23,7 +25,7 @@ PotentialCostType = Literal[
 class CostWBSEffort(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    wbs_id: int = Field(gt=0)
+    wbs_id: WbsId
     wbs_name: str
     description: str
     estimated_mm: float = Field(gt=0, le=10_000)
@@ -38,7 +40,7 @@ class CostWBSEffort(BaseModel):
 
 
 class PlanningCostRequest(BaseModel):
-    project_id: int = Field(gt=0)
+    project_id: ProjectId
     project_name: str
     wbs_efforts: list[CostWBSEffort] = Field(min_length=1, max_length=200)
     average_monthly_unit_price: int = Field(gt=0, le=1_000_000_000)
@@ -77,10 +79,11 @@ class RecommendedEstimate(BaseModel):
 
 
 class PlanningCostResponse(BaseModel):
-    project_id: int = Field(gt=0)
+    project_id: ProjectId
     currency: Literal["KRW"]
     total_estimated_mm: float = Field(gt=0)
     cost_summary: CostSummary
     estimate: RecommendedEstimate
     unpriced_items: list[str] = Field(default_factory=list)
     warning: str
+    llm_status: LLMStatus

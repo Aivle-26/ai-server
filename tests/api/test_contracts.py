@@ -56,14 +56,55 @@ class ApiContractTest(unittest.TestCase):
                 self.assertTrue(
                     response.headers["content-type"].startswith("application/json")
                 )
-                self.assertIsInstance(response.json()["detail"], list)
+                body = response.json()
+                self.assertEqual(body["code"], "VALIDATION_ERROR")
+                self.assertEqual(body["request_id"], response.headers["X-Request-ID"])
+                self.assertFalse(body["retryable"])
+                self.assertIsInstance(body["details"], list)
 
     def test_domain_routes_reject_get_method(self):
         for path in sorted(POST_ENDPOINTS):
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 405)
-                self.assertEqual(response.json()["detail"], "Method Not Allowed")
+                self.assertEqual(response.json()["code"], "METHOD_NOT_ALLOWED")
+                self.assertEqual(response.json()["message"], "Method Not Allowed")
+
+    def test_request_id_is_generated_or_propagated(self):
+        generated = self.client.get("/health")
+        self.assertRegex(generated.headers["X-Request-ID"], r"^[a-f0-9]{32}$")
+
+        supplied = self.client.get(
+            "/health",
+            headers={"X-Request-ID": "backend-request-123"},
+        )
+        self.assertEqual(
+            supplied.headers["X-Request-ID"],
+            "backend-request-123",
+        )
+
+        invalid = self.client.get(
+            "/health",
+            headers={"X-Request-ID": "invalid request id"},
+        )
+        self.assertNotEqual(
+            invalid.headers["X-Request-ID"],
+            "invalid request id",
+        )
+
+    def test_openapi_uses_common_error_response(self):
+        self.assertIn("ErrorResponse", self.openapi["components"]["schemas"])
+        for path in POST_ENDPOINTS:
+            with self.subTest(path=path):
+                operation = self.openapi["paths"][path]["post"]
+                for status_code in ("400", "413", "422", "502", "503", "504"):
+                    response = operation["responses"][status_code]
+                    schema = response["content"]["application/json"]["schema"]
+                    self.assertEqual(
+                        schema["$ref"],
+                        "#/components/schemas/ErrorResponse",
+                    )
+                    self.assertIn("X-Request-ID", response["headers"])
 
     def test_response_models_are_declared_for_backend_contract(self):
         expected_response_schemas = {

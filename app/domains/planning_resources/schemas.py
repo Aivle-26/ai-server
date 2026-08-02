@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.api_types import LLMStatus, MemberId, ProjectId, WbsId
+
 
 AllocationStatus = Literal["PLANNED", "ACTIVE", "PAUSED", "COMPLETED"]
 
@@ -14,7 +16,7 @@ AllocationStatus = Literal["PLANNED", "ACTIVE", "PAUSED", "COMPLETED"]
 class ResourceWBSTask(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    wbs_id: int = Field(gt=0)
+    wbs_id: WbsId
     wbs_name: str
     description: str
     start_date: date
@@ -63,7 +65,7 @@ class MemberAllocation(BaseModel):
 class ProjectMemberCandidate(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    project_member_id: int = Field(gt=0)
+    project_member_id: MemberId
     roles: list[str] = Field(min_length=1, max_length=20)
     skills: list[MemberSkill] = Field(default_factory=list, max_length=100)
     allocations: list[MemberAllocation] = Field(default_factory=list, max_length=20)
@@ -88,7 +90,7 @@ class ProjectMemberCandidate(BaseModel):
 
 
 class PlanningResourceRequest(BaseModel):
-    project_id: int = Field(gt=0)
+    project_id: ProjectId
     wbs_tasks: list[ResourceWBSTask] = Field(min_length=1, max_length=200)
     project_members: list[ProjectMemberCandidate] = Field(
         min_length=1,
@@ -113,14 +115,14 @@ class RequiredSkill(BaseModel):
 
 
 class RecommendedMember(BaseModel):
-    project_member_id: int = Field(gt=0)
+    project_member_id: MemberId
     recommendation_score: float = Field(ge=0, le=100)
     assigned_hours: float = Field(gt=0)
     remaining_available_hours: float = Field(ge=0)
 
 
 class WBSResourceAssignment(BaseModel):
-    wbs_id: int = Field(gt=0)
+    wbs_id: WbsId
     required_role_code: str
     required_skills: list[RequiredSkill] = Field(default_factory=list)
     estimated_person_days: float = Field(gt=0)
@@ -141,7 +143,7 @@ class RequiredStaffing(BaseModel):
 
 
 class PlanningResourceResponse(BaseModel):
-    project_id: int = Field(gt=0)
+    project_id: ProjectId
     required_staffing: list[RequiredStaffing]
     assignments: list[WBSResourceAssignment]
     total_estimated_person_days: float = Field(gt=0)
@@ -149,3 +151,4 @@ class PlanningResourceResponse(BaseModel):
     total_estimated_mm: float = Field(gt=0)
     unassigned_wbs_ids: list[int] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    llm_status: LLMStatus

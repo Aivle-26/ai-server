@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 
+from app.core.http import install_http_contract
+
 from app.domains.communication_risk.router import (
     router as communication_risk_router,
 )
@@ -38,3 +40,5 @@ app.include_router(planning_schedule_router)
 app.include_router(planning_resources_router)
 app.include_router(planning_costs_router)
 app.include_router(reporting_router)
+
+install_http_contract(app)

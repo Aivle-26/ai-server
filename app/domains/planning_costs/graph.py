@@ -65,8 +65,11 @@ class PlanningCostGraph:
         state: PlanningCostState,
     ) -> dict[str, Any]:
         return {
-            "result": self.cost_service.calculate(
+            "result": {
+                **self.cost_service.calculate(
                 state["request"],
                 state["analysis"],
-            )
+                ),
+                "llm_status": "SUCCEEDED",
+            }
         }

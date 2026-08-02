@@ -32,15 +32,15 @@ class ReportingApiPipelineTest(unittest.TestCase):
                 "week_end": "2026-07-26",
                 "wbs_tasks": [
                     {
-                        "wbs_id": "WBS-1",
+                        "wbs_id": 1,
                         "task_name": "Reporting API",
-                        "assignee_id": "M-1",
+                        "assignee_id": 1,
                         "due_date": "2026-07-24",
                         "status": "DONE",
                         "progress_rate": 100,
                     },
                     {
-                        "wbs_id": "WBS-2",
+                        "wbs_id": 2,
                         "task_name": "Reporting UI",
                         "assignee_id": None,
                         "due_date": "2026-07-25",
