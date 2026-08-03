@@ -103,6 +103,8 @@ def complete_plan() -> GeneratedSchedulePlan:
             most_likely_days=2,
             pessimistic_days=4,
             predecessor_wbs_ids=[3],
+            milestone=True,
+            buffer_days=2,
         ),
         GeneratedTaskScheduleEstimate(
             wbs_id=7,
@@ -170,7 +172,10 @@ class PlanningScheduleGraphTest(unittest.TestCase):
         for schedule in result["wbs_schedules"]:
             self.assertEqual(
                 set(schedule),
-                {"wbs_id", "expected", "recommended", "conservative"},
+                {
+                    "wbs_id", "expected", "recommended", "conservative",
+                    "predecessor_wbs_ids", "milestone", "buffer_days",
+                },
             )
             expected_end = date.fromisoformat(
                 schedule["expected"]["end_date"].isoformat()
@@ -203,6 +208,10 @@ class PlanningScheduleGraphTest(unittest.TestCase):
                 by_id[7][policy]["start_date"],
                 by_id[4][policy]["end_date"],
             )
+        self.assertEqual(by_id[4]["predecessor_wbs_ids"], [3])
+        self.assertEqual(by_id[3]["predecessor_wbs_ids"], [])
+        self.assertTrue(by_id[4]["milestone"])
+        self.assertEqual(by_id[4]["buffer_days"], 2)
 
     def test_parent_schedule_is_rolled_up_from_child_tasks(self):
         result = self.build_graph().invoke(sample_request())

@@ -19,6 +19,8 @@ class GeneratedTaskScheduleEstimate(BaseModel):
     most_likely_days: int = Field(ge=1, le=365)
     pessimistic_days: int = Field(ge=1, le=365)
     predecessor_wbs_ids: list[int] = Field(default_factory=list, max_length=50)
+    milestone: bool = False
+    buffer_days: int = Field(default=0, ge=0, le=365)
 
 
 class GeneratedSchedulePlan(BaseModel):

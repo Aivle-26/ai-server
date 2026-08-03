@@ -69,11 +69,15 @@ class PlanningScheduleService:
 
         durations_by_task: dict[int, dict[str, int]] = {}
         predecessors_by_task: dict[int, list[int]] = {}
+        milestone_by_task: dict[int, bool] = {}
+        buffer_days_by_task: dict[int, int] = {}
         for task in task_items:
             estimate = estimate_by_id.get(task.wbs_id)
             if estimate is None:
                 optimistic, most_likely, pessimistic = DEFAULT_TASK_DURATIONS
                 proposed_predecessors: list[int] = []
+                milestone = False
+                buffer_days = 0
                 warnings.append(
                     f"{task.wbs_id} 기간 추정이 누락되어 기본 기간을 적용했습니다."
                 )
@@ -84,6 +88,8 @@ class PlanningScheduleService:
                     estimate.pessimistic_days,
                 ))
                 proposed_predecessors = estimate.predecessor_wbs_ids
+                milestone = estimate.milestone
+                buffer_days = estimate.buffer_days
 
             durations_by_task[task.wbs_id] = self._duration_percentiles(
                 request,
@@ -98,6 +104,8 @@ class PlanningScheduleService:
                 task_order,
                 warnings,
             )
+            milestone_by_task[task.wbs_id] = milestone
+            buffer_days_by_task[task.wbs_id] = buffer_days
 
         self._apply_phase_gates(
             request,
@@ -147,6 +155,9 @@ class PlanningScheduleService:
                 "expected": ranges_by_policy["expected"][item.wbs_id],
                 "recommended": ranges_by_policy["recommended"][item.wbs_id],
                 "conservative": ranges_by_policy["conservative"][item.wbs_id],
+                "predecessor_wbs_ids": predecessors_by_task.get(item.wbs_id, []),
+                "milestone": milestone_by_task.get(item.wbs_id, False),
+                "buffer_days": buffer_days_by_task.get(item.wbs_id, 0),
             })
         return {
             "project_id": request.project_id,

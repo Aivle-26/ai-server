@@ -94,6 +94,9 @@ class WBSScheduleRecommendation(BaseModel):
     expected: ScheduleDateRange
     recommended: ScheduleDateRange
     conservative: ScheduleDateRange
+    predecessor_wbs_ids: list[WbsId] = Field(default_factory=list)
+    milestone: bool = False
+    buffer_days: int = Field(default=0, ge=0, le=365)
 
 
 class PlanningScheduleResponse(BaseModel):
