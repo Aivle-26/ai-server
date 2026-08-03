@@ -1,0 +1,1 @@
+"""Communication risk analysis domain."""

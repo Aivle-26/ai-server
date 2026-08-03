@@ -1,0 +1,193 @@
+name: AI Main Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-main-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Test and Deploy to Existing EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m unittest discover -v
+          python -m compileall -q app tests
+          python -m pip check
+
+      - name: Package AI server source
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          archive="$RUNNER_TEMP/aipm-ai-${GITHUB_SHA}.tar.gz"
+          tar \
+            --exclude='./.git' \
+            --exclude='./.github' \
+            --exclude='./.venv' \
+            --exclude='*/__pycache__' \
+            --exclude='*.py[cod]' \
+            --exclude='./.env' \
+            --exclude='./.env.*' \
+            --exclude='./data' \
+            --exclude='./logs' \
+            --exclude='./sample_data' \
+            -czf "$archive" .
+
+          archive_listing="$(tar -tzf "$archive")"
+          grep -Fxq './scripts/deploy.sh' <<<"$archive_listing"
+          grep -Fxq './scripts/rollback.sh' <<<"$archive_listing"
+          grep -Fxq './scripts/health-check.sh' <<<"$archive_listing"
+          if grep -Eq '^\./sample_data(/|$)' <<<"$archive_listing"; then
+            echo "sample_data must not be packaged for deployment" >&2
+            exit 1
+          fi
+
+          echo "path=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare SSH files
+        id: ssh
+        shell: bash
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${EC2_SSH_KEY}" || -z "${EC2_KNOWN_HOSTS}" ]]; then
+            echo "EC2_SSH_KEY and EC2_KNOWN_HOSTS secrets are required" >&2
+            exit 1
+          fi
+
+          key_file="$RUNNER_TEMP/aipm-ec2-key"
+          known_hosts_file="$RUNNER_TEMP/aipm-known-hosts"
+
+          umask 077
+          printf '%s\n' "${EC2_SSH_KEY}" > "$key_file"
+          printf '%s\n' "${EC2_KNOWN_HOSTS}" > "$known_hosts_file"
+          chmod 600 "$key_file"
+
+          echo "key_file=$key_file" >> "$GITHUB_OUTPUT"
+          echo "known_hosts_file=$known_hosts_file" >> "$GITHUB_OUTPUT"
+
+      - name: Upload AI source archive to EC2
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          SSH_KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS_FILE: ${{ steps.ssh.outputs.known_hosts_file }}
+          LOCAL_ARCHIVE: ${{ steps.package.outputs.path }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${EC2_HOST}" || -z "${EC2_USER}" ]]; then
+            echo "EC2_HOST and EC2_USER secrets are required" >&2
+            exit 1
+          fi
+
+          remote_archive="/tmp/aipm-ai-${GITHUB_SHA}.tar.gz"
+          echo "REMOTE_ARCHIVE=$remote_archive" >> "$GITHUB_ENV"
+
+          scp \
+            -i "$SSH_KEY_FILE" \
+            -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
+            -o StrictHostKeyChecking=yes \
+            "$LOCAL_ARCHIVE" \
+            "${EC2_USER}@${EC2_HOST}:${remote_archive}"
+
+      - name: Deploy AI server on EC2
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          SSH_KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS_FILE: ${{ steps.ssh.outputs.known_hosts_file }}
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i "$SSH_KEY_FILE" \
+            -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
+            -o StrictHostKeyChecking=yes \
+            "${EC2_USER}@${EC2_HOST}" \
+            "bash /opt/aipm/ai-server/scripts/deploy.sh '${REMOTE_ARCHIVE}' '${GITHUB_SHA}'"
+
+      - name: Verify deployed revision and service
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          SSH_KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS_FILE: ${{ steps.ssh.outputs.known_hosts_file }}
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i "$SSH_KEY_FILE" \
+            -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
+            -o StrictHostKeyChecking=yes \
+            "${EC2_USER}@${EC2_HOST}" \
+            "test \"\$(cat /opt/aipm/ai-server/REVISION)\" = '${GITHUB_SHA}' \
+              && sudo -n systemctl is-active --quiet aipm-ai-server.service \
+              && sudo -n systemctl is-enabled --quiet aipm-ai-server.service \
+              && /opt/aipm/ai-server/scripts/health-check.sh"
+
+      - name: Cleanup remote deployment archive
+        if: always()
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          SSH_KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS_FILE: ${{ steps.ssh.outputs.known_hosts_file }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${EC2_HOST:-}" || -z "${EC2_USER:-}" || -z "${SSH_KEY_FILE:-}" || -z "${KNOWN_HOSTS_FILE:-}" ]]; then
+            exit 0
+          fi
+
+          remote_archive="${REMOTE_ARCHIVE:-/tmp/aipm-ai-${GITHUB_SHA}.tar.gz}"
+          ssh \
+            -i "$SSH_KEY_FILE" \
+            -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
+            -o StrictHostKeyChecking=yes \
+            "${EC2_USER}@${EC2_HOST}" \
+            "rm -f '${remote_archive}'; \
+              find /tmp -maxdepth 1 -type d -user '${EC2_USER}' \
+                -name 'aipm-ai-release-${GITHUB_SHA}.*' \
+                -exec rm -rf -- {} +" \
+            || true
+
+      - name: Remove SSH files
+        if: always()
+        shell: bash
+        run: |
+          rm -f "${{ steps.ssh.outputs.key_file }}" "${{ steps.ssh.outputs.known_hosts_file }}"

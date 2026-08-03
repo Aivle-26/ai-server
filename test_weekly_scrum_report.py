@@ -3,7 +3,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from app.schemas.report import (
+from app.domains.reporting.schemas import (
     AiReviewFinding,
     NextWeekActionPlan,
     ReferenceDocument,
@@ -20,7 +20,7 @@ from app.schemas.report import (
     WeeklyScrumSummarizeRequest,
     WeeklyTeamSummary,
 )
-from app.services.report_service import ReportService
+from app.domains.reporting.service import ReportService
 
 
 WEEK_START = date(2026, 7, 27)
