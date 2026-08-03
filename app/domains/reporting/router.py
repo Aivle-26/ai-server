@@ -10,6 +10,14 @@ from .schemas import (
     MeetingAnalysisResponse,
     WeeklyReportRequest,
     WeeklyReportResponse,
+    WeeklyScrumFinalizeRequest,
+    WeeklyScrumFinalizeResponse,
+    WeeklyScrumRecommendNextActionsRequest,
+    WeeklyScrumRecommendNextActionsResponse,
+    WeeklyScrumReviewRequest,
+    WeeklyScrumReviewResponse,
+    WeeklyScrumSummarizeRequest,
+    WeeklyScrumSummarizeResponse,
 )
 
 router = APIRouter()
@@ -74,3 +82,47 @@ def query_deliverable_rag(
     request: DeliverableRagRequest,
 ) -> DeliverableRagResponse:
     return report_graph.query_deliverable_rag(request)
+
+
+@router.post(
+    "/api/v1/reports/weekly-scrum/summarize",
+    response_model=WeeklyScrumSummarizeResponse,
+    summary="팀원별 주간 스크럼 종합 요약",
+)
+def summarize_weekly_scrum(
+    request: WeeklyScrumSummarizeRequest,
+) -> WeeklyScrumSummarizeResponse:
+    return report_graph.summarize_weekly_scrum(request)
+
+
+@router.post(
+    "/api/v1/reports/weekly-scrum/review",
+    response_model=WeeklyScrumReviewResponse,
+    summary="주간 스크럼 기준문서 기반 검토",
+)
+def review_weekly_scrum(
+    request: WeeklyScrumReviewRequest,
+) -> WeeklyScrumReviewResponse:
+    return report_graph.review_weekly_scrum(request)
+
+
+@router.post(
+    "/api/v1/reports/weekly-scrum/recommend-next-actions",
+    response_model=WeeklyScrumRecommendNextActionsResponse,
+    summary="다음 주 실행 업무 추천",
+)
+def recommend_next_actions(
+    request: WeeklyScrumRecommendNextActionsRequest,
+) -> WeeklyScrumRecommendNextActionsResponse:
+    return report_graph.recommend_next_actions(request)
+
+
+@router.post(
+    "/api/v1/reports/weekly-scrum/finalize",
+    response_model=WeeklyScrumFinalizeResponse,
+    summary="PM 검토 결과 기반 최종 주간 보고서 생성",
+)
+def finalize_weekly_scrum_report(
+    request: WeeklyScrumFinalizeRequest,
+) -> WeeklyScrumFinalizeResponse:
+    return report_graph.finalize_weekly_scrum_report(request)

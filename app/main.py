@@ -42,3 +42,4 @@ app.include_router(planning_costs_router)
 app.include_router(reporting_router)
 
 install_http_contract(app)
+
