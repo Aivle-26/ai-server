@@ -1,0 +1,265 @@
+{
+  "project_id": 1,
+  "week_start": "2026-07-27",
+  "week_end": "2026-08-02",
+  "fact_summary": {
+    "team_members": [
+      {
+        "member_id": "AI-01",
+        "member_name": "김남효",
+        "role": "AI",
+        "department": null,
+        "skills": [
+          "Python",
+          "LLM"
+        ],
+        "availability_hours": 40.0,
+        "current_workload_hours": 34.0,
+        "leave_start": null,
+        "leave_end": null
+      },
+      {
+        "member_id": "BE-01",
+        "member_name": "정다영",
+        "role": "BACKEND",
+        "department": null,
+        "skills": [
+          "Spring",
+          "FastAPI"
+        ],
+        "availability_hours": 40.0,
+        "current_workload_hours": 38.0,
+        "leave_start": null,
+        "leave_end": null
+      },
+      {
+        "member_id": "FE-01",
+        "member_name": "윤명세",
+        "role": "FRONTEND",
+        "department": null,
+        "skills": [
+          "React"
+        ],
+        "availability_hours": 40.0,
+        "current_workload_hours": 36.0,
+        "leave_start": null,
+        "leave_end": null
+      },
+      {
+        "member_id": "QA-01",
+        "member_name": "박승원",
+        "role": "QA",
+        "department": null,
+        "skills": [
+          "Integration Test"
+        ],
+        "availability_hours": 40.0,
+        "current_workload_hours": 8.0,
+        "leave_start": null,
+        "leave_end": null
+      }
+    ],
+    "weekly_goals": [
+      "공통 데이터 스키마와 review Agent 구현",
+      "프로젝트 생성 API 구현",
+      "프로젝트 생성 화면과 대시보드 연결",
+      "테스트 시나리오 준비"
+    ],
+    "completed_tasks": [
+      {
+        "item_id": "TASK-BE-PROJECT-CREATE",
+        "title": "프로젝트 생성 API 구현",
+        "description": null,
+        "task_type": "BACKEND",
+        "owner_id": "BE-01",
+        "owner": "정다영",
+        "due_date": "2026-07-31",
+        "status": "DONE",
+        "evidence_text": "프로젝트 생성 API 개발은 완료했지만 프론트 연동 테스트는 하지 못했다.",
+        "done_condition": null,
+        "estimated_hours": null,
+        "carryover_count": 0,
+        "dependency_ids": [],
+        "related_task_ids": [
+          "TASK-FE-PROJECT-CREATE"
+        ],
+        "integration_required": true,
+        "source_type": "JIRA_ISSUE",
+        "source_reference_id": "PM-101",
+        "requirement_id": "REQ-001",
+        "wbs_id": "WBS-BE-01",
+        "deliverable_id": null,
+        "source_member_id": "BE-01",
+        "source_member_name": "정다영",
+        "source_member_role": "BACKEND"
+      }
+    ],
+    "in_progress_tasks": [
+      {
+        "item_id": "TASK-FE-PROJECT-CREATE",
+        "title": "프로젝트 생성 화면 연동",
+        "description": null,
+        "task_type": "FRONTEND",
+        "owner_id": "FE-01",
+        "owner": "윤명세",
+        "due_date": "2026-08-01",
+        "status": "IN_PROGRESS",
+        "evidence_text": "화면은 구현했지만 API 응답 형식이 확정되지 않아 연동이 진행 중이다.",
+        "done_condition": null,
+        "estimated_hours": null,
+        "carryover_count": 0,
+        "dependency_ids": [
+          "TASK-SCHEMA",
+          "TASK-BE-PROJECT-CREATE"
+        ],
+        "related_task_ids": [
+          "TASK-BE-PROJECT-CREATE"
+        ],
+        "integration_required": true,
+        "source_type": "JIRA_ISSUE",
+        "source_reference_id": "PM-102",
+        "requirement_id": "REQ-001",
+        "wbs_id": "WBS-FE-01",
+        "deliverable_id": null,
+        "source_member_id": "FE-01",
+        "source_member_name": "윤명세",
+        "source_member_role": "FRONTEND"
+      }
+    ],
+    "delayed_tasks": [
+      {
+        "item_id": "TASK-SCHEMA",
+        "title": "공통 데이터 스키마 확정",
+        "description": "AI·백엔드·프론트가 사용할 JSON 계약을 확정한다.",
+        "task_type": "DATA",
+        "owner_id": "AI-01",
+        "owner": "김남효",
+        "due_date": "2026-08-01",
+        "status": "BLOCKED",
+        "evidence_text": "데이터 형식 합의가 끝나지 않아 3주째 이월되고 있다.",
+        "done_condition": "4개 API OpenAPI 스키마 합의",
+        "estimated_hours": 10.0,
+        "carryover_count": 3,
+        "dependency_ids": [],
+        "related_task_ids": [],
+        "integration_required": false,
+        "source_type": "WBS_TASK",
+        "source_reference_id": "WBS-AI-01",
+        "requirement_id": null,
+        "wbs_id": "WBS-AI-01",
+        "deliverable_id": null,
+        "source_member_id": "AI-01",
+        "source_member_name": "김남효",
+        "source_member_role": "AI"
+      }
+    ],
+    "issues": [],
+    "reported_risks": [],
+    "next_week_tasks": [
+      {
+        "item_id": "TASK-DASHBOARD",
+        "title": "대시보드 프로젝트 정보 연결",
+        "description": null,
+        "task_type": "FRONTEND",
+        "owner_id": "FE-01",
+        "owner": "윤명세",
+        "due_date": "2026-08-07",
+        "status": "TODO",
+        "evidence_text": null,
+        "done_condition": "확정된 API 스키마로 대시보드 조회 성공",
+        "estimated_hours": 12.0,
+        "carryover_count": 0,
+        "dependency_ids": [
+          "TASK-SCHEMA"
+        ],
+        "related_task_ids": [],
+        "integration_required": false,
+        "source_type": "WBS_TASK",
+        "source_reference_id": "WBS-FE-02",
+        "requirement_id": null,
+        "wbs_id": "WBS-FE-02",
+        "deliverable_id": null,
+        "source_member_id": "FE-01",
+        "source_member_name": "윤명세",
+        "source_member_role": "FRONTEND"
+      }
+    ],
+    "requests": [],
+    "missing_update_members": [
+      "이서연"
+    ]
+  },
+  "team_summary": {
+    "overall_status": "AT_RISK",
+    "executive_summary": "이번 주 AI Multi Agent 기반 프로젝트 통합 관리 플랫폼에서는 프로젝트 생성 API가 구현 완료되었으나, 공통 데이터 스키마 확정 작업이 3주째 지연되고 있습니다. 프론트엔드 화면 연동 작업은 진행 중이나 API 응답 형식 미확정으로 완전한 연동이 지연되고 있습니다. 이슈와 위험은 보고되지 않았으나, 데이터 스키마 지연이 전체 일정에 영향을 줄 수 있습니다. 다음 주에는 대시보드 프로젝트 정보 연결 작업이 예정되어 있습니다. 팀원별로 업무 진행 상황에 차이가 있으며, 협업 조율이 필요한 상황입니다.",
+    "team_progress": [
+      "프로젝트 생성 API 구현 완료",
+      "프로젝트 생성 화면 연동 진행 중",
+      "공통 데이터 스키마 확정 작업 3주째 지연"
+    ],
+    "member_summaries": [
+      {
+        "member_id": "AI-01",
+        "member_name": "김남효",
+        "role": "AI",
+        "summary": "김남효는 완료 업무가 없고, 공통 데이터 스키마 확정 작업이 3주째 지연되고 있습니다.",
+        "key_completed_tasks": [],
+        "key_in_progress_tasks": [],
+        "key_issues": [],
+        "key_risks": [],
+        "next_week_focus": []
+      },
+      {
+        "member_id": "BE-01",
+        "member_name": "정다영",
+        "role": "BACKEND",
+        "summary": "정다영은 프로젝트 생성 API 구현을 완료했으나, 프론트엔드 연동 테스트는 진행하지 못했습니다.",
+        "key_completed_tasks": [
+          "프로젝트 생성 API 구현"
+        ],
+        "key_in_progress_tasks": [],
+        "key_issues": [],
+        "key_risks": [],
+        "next_week_focus": []
+      },
+      {
+        "member_id": "FE-01",
+        "member_name": "윤명세",
+        "role": "FRONTEND",
+        "summary": "윤명세는 프로젝트 생성 화면 연동 작업을 진행 중이며, API 응답 형식 미확정으로 연동이 지연되고 있습니다.",
+        "key_completed_tasks": [],
+        "key_in_progress_tasks": [
+          "프로젝트 생성 화면 연동"
+        ],
+        "key_issues": [],
+        "key_risks": [],
+        "next_week_focus": [
+          "대시보드 프로젝트 정보 연결"
+        ]
+      },
+      {
+        "member_id": "QA-01",
+        "member_name": "박승원",
+        "role": "QA",
+        "summary": "박승원은 이번 주 완료, 진행, 지연 업무가 없습니다.",
+        "key_completed_tasks": [],
+        "key_in_progress_tasks": [],
+        "key_issues": [],
+        "key_risks": [],
+        "next_week_focus": []
+      }
+    ],
+    "key_issues": [],
+    "key_risks": [],
+    "next_week_plan_summary": [
+      "대시보드 프로젝트 정보 연결 작업 예정"
+    ]
+  },
+  "completed_task_count": 1,
+  "in_progress_task_count": 1,
+  "delayed_task_count": 1,
+  "issue_count": 0,
+  "risk_count": 0,
+  "generated_at": "2026-08-03T13:38:11.634809",
+  "llm_status": "SUCCEEDED"
+}
