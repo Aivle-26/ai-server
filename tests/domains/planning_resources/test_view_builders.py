@@ -188,6 +188,7 @@ def response_payload() -> dict:
         # WBS 4 is partially staffed, not wholly without a recommendation.
         "unassigned_wbs_ids": [4],
         "warnings": ["WBS 4 has an uncovered capacity shortfall"],
+        "llm_status": "SUCCEEDED",
     }
 
 
@@ -907,7 +908,10 @@ class ViewBuilderTestCase(unittest.TestCase):
                 ]
             )
         ]
-        raw_response = service.build_recommendation(self.request, plans)
+        raw_response = {
+            **service.build_recommendation(self.request, plans),
+            "llm_status": "SUCCEEDED",
+        }
         typed_response = PlanningResourceResponse.model_validate(raw_response)
 
         organization = build_organization_chart(
