@@ -3,15 +3,34 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.core.api_types import ProjectId, RequirementId
+from app.core.api_types import LLMStatus, MemberId, ProjectId, RequirementId, WbsId
 
 
 RiskLevel = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+ImpactType = Literal["DIRECT", "INDIRECT", "NONE"]
 
 
 # =========================================================
 # 1. 영향도 평가
 # =========================================================
+
+class ImpactWBSTask(BaseModel):
+    """AI 영향 분석에 사용할 확정 WBS 태스크."""
+
+    task_id: WbsId
+    task_name: str = Field(min_length=1, max_length=500)
+    description: str = Field(default="", max_length=5_000)
+    assignee: str | None = None
+    status: str = "TODO"
+    estimated_days: int = Field(default=0, ge=0)
+
+
+class ImpactMember(BaseModel):
+    """변경으로 영향받을 수 있는 팀원."""
+
+    member_id: MemberId
+    member_name: str
+
 
 class ImpactAssessmentRequest(BaseModel):
     project_id: ProjectId
@@ -19,6 +38,7 @@ class ImpactAssessmentRequest(BaseModel):
     change_title: str = Field(min_length=1, max_length=500)
     change_description: str = Field(min_length=1, max_length=10_000)
 
+    # --- 기존 수동 입력 수치 (LLM 미사용/실패 시 fallback 입력으로 사용) ---
     affected_task_count: int = Field(default=0, ge=0)
     affected_member_count: int = Field(default=0, ge=0)
     remaining_days: int = Field(default=0, ge=0)
@@ -28,6 +48,25 @@ class ImpactAssessmentRequest(BaseModel):
     database_changed: bool = False
     api_changed: bool = False
     ui_changed: bool = False
+
+    # --- AI 자동 산출용 컨텍스트 (선택) ---
+    # wbs_tasks가 주어지고 use_llm=True이면 AI가 아래 수치를 자동 산출한다.
+    use_llm: bool = True
+    wbs_tasks: list[ImpactWBSTask] = Field(default_factory=list)
+    members: list[ImpactMember] = Field(default_factory=list)
+    # 남은 일정 자동 계산용. 주어지면 (project_end_date - evaluation_date)로 계산.
+    project_end_date: date | None = None
+    evaluation_date: date | None = None
+
+
+class ImpactAffectedTask(BaseModel):
+    """AI가 식별한 영향 태스크 결과."""
+
+    task_id: WbsId
+    task_name: str
+    impact_type: ImpactType
+    additional_work_days: int
+    reason: str
 
 
 class ImpactAssessmentResponse(BaseModel):
@@ -43,6 +82,23 @@ class ImpactAssessmentResponse(BaseModel):
 
     risk_factors: list[str]
     recommended_actions: list[str]
+
+    # --- AI 산출 결과 (프론트 폼 자동 입력용) ---
+    llm_status: LLMStatus = "DISABLED"
+    ai_summary: str | None = None
+
+    # 아래 4개는 llm_status=SUCCEEDED이면 AI 산출값, 아니면 입력값을 그대로 반영
+    affected_task_count: int = 0
+    affected_member_count: int = 0
+    remaining_days: int = 0
+    additional_work_days: int = 0
+
+    scope_changed: bool = False
+    database_changed: bool = False
+    api_changed: bool = False
+    ui_changed: bool = False
+
+    affected_tasks: list[ImpactAffectedTask] = Field(default_factory=list)
 
 
 # =========================================================

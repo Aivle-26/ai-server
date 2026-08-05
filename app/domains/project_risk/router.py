@@ -3,6 +3,8 @@ from datetime import date
 
 from fastapi import APIRouter, HTTPException
 
+from app.core.api_types import LLMStatus
+
 from .schemas import (
     ArtifactSecurityRequest,
     ArtifactSecurityResponse,
@@ -11,6 +13,7 @@ from .schemas import (
     AssigneeCandidateResult,
     AssigneeReassignmentRequest,
     AssigneeReassignmentResponse,
+    ImpactAffectedTask,
     ImpactAssessmentRequest,
     ImpactAssessmentResponse,
     MemberDelayRequest,
@@ -23,6 +26,11 @@ from .schemas import (
     ScheduleWBSRiskItemResult,
 
     SecurityDetection,
+)
+from .services.impact_llm_service import (
+    ImpactAnalysisLLMService,
+    ImpactLLMConfigurationError,
+    ImpactLLMGenerationError,
 )
 
 router = APIRouter(
@@ -45,6 +53,150 @@ def get_risk_level(score: int) -> str:
 # 1. 영향도 평가 API
 # =========================================================
 
+impact_llm_service = ImpactAnalysisLLMService()
+
+
+class _ResolvedImpactInputs:
+    """점수 계산에 쓸 최종 수치 묶음.
+
+    llm_status=SUCCEEDED이면 AI 산출값, 아니면 사용자가 넣은 값(fallback).
+    """
+
+    def __init__(
+        self,
+        *,
+        affected_task_count: int,
+        affected_member_count: int,
+        remaining_days: int,
+        additional_work_days: int,
+        scope_changed: bool,
+        database_changed: bool,
+        api_changed: bool,
+        ui_changed: bool,
+        llm_status: LLMStatus,
+        ai_summary: str | None,
+        affected_tasks: list[ImpactAffectedTask],
+    ) -> None:
+        self.affected_task_count = affected_task_count
+        self.affected_member_count = affected_member_count
+        self.remaining_days = remaining_days
+        self.additional_work_days = additional_work_days
+        self.scope_changed = scope_changed
+        self.database_changed = database_changed
+        self.api_changed = api_changed
+        self.ui_changed = ui_changed
+        self.llm_status = llm_status
+        self.ai_summary = ai_summary
+        self.affected_tasks = affected_tasks
+
+
+def _compute_remaining_days(request: ImpactAssessmentRequest) -> int:
+    """종료일이 주어지면 자동 계산, 아니면 입력값 사용."""
+    if request.project_end_date is not None:
+        base_date = request.evaluation_date or date.today()
+        return max((request.project_end_date - base_date).days, 0)
+    return request.remaining_days
+
+
+def _resolve_impact_inputs(
+    request: ImpactAssessmentRequest,
+) -> _ResolvedImpactInputs:
+    remaining_days = _compute_remaining_days(request)
+
+    # LLM 미사용/WBS 미제공 → 기존 규칙식 그대로 (수동 입력값 사용)
+    if not (request.use_llm and request.wbs_tasks):
+        return _ResolvedImpactInputs(
+            affected_task_count=request.affected_task_count,
+            affected_member_count=request.affected_member_count,
+            remaining_days=remaining_days,
+            additional_work_days=request.additional_work_days,
+            scope_changed=request.scope_changed,
+            database_changed=request.database_changed,
+            api_changed=request.api_changed,
+            ui_changed=request.ui_changed,
+            llm_status="DISABLED",
+            ai_summary=None,
+            affected_tasks=[],
+        )
+
+    context = {
+        "change_title": request.change_title,
+        "change_description": request.change_description,
+        "wbs_tasks": [task.model_dump(mode="json") for task in request.wbs_tasks],
+    }
+
+    try:
+        analysis = impact_llm_service.analyze(context)
+    except ImpactLLMConfigurationError:
+        llm_status: LLMStatus = "SKIPPED_NO_API_KEY"
+        analysis = None
+    except ImpactLLMGenerationError:
+        llm_status = "FALLBACK"
+        analysis = None
+
+    # LLM 실패 → 수동 입력값으로 fallback
+    if analysis is None:
+        return _ResolvedImpactInputs(
+            affected_task_count=request.affected_task_count,
+            affected_member_count=request.affected_member_count,
+            remaining_days=remaining_days,
+            additional_work_days=request.additional_work_days,
+            scope_changed=request.scope_changed,
+            database_changed=request.database_changed,
+            api_changed=request.api_changed,
+            ui_changed=request.ui_changed,
+            llm_status=llm_status,
+            ai_summary=None,
+            affected_tasks=[],
+        )
+
+    # 환각 방지: 실제 존재하는 task_id + 영향 있는(NONE 제외) 것만 채택
+    task_by_id = {task.task_id: task for task in request.wbs_tasks}
+    affected_tasks: list[ImpactAffectedTask] = []
+    for item in analysis.affected_tasks:
+        source = task_by_id.get(item.task_id)
+        if source is None or item.impact_type == "NONE":
+            continue
+        affected_tasks.append(
+            ImpactAffectedTask(
+                task_id=item.task_id,
+                task_name=source.task_name,
+                impact_type=item.impact_type,
+                additional_work_days=item.additional_work_days,
+                reason=item.reason,
+            )
+        )
+
+    additional_work_days = sum(
+        item.additional_work_days for item in affected_tasks
+    )
+
+    # 영향 팀원 수: 요청에 members가 있으면 그 수, 없으면 영향 태스크 담당자 distinct
+    if request.members:
+        affected_member_count = len(request.members)
+    else:
+        assignees = {
+            task_by_id[item.task_id].assignee
+            for item in affected_tasks
+            if task_by_id[item.task_id].assignee
+        }
+        affected_member_count = len(assignees)
+
+    return _ResolvedImpactInputs(
+        affected_task_count=len(affected_tasks),
+        affected_member_count=affected_member_count,
+        remaining_days=remaining_days,
+        additional_work_days=additional_work_days,
+        scope_changed=analysis.scope_changed,
+        database_changed=analysis.database_changed,
+        api_changed=analysis.api_changed,
+        ui_changed=analysis.ui_changed,
+        llm_status="SUCCEEDED",
+        ai_summary=analysis.summary or None,
+        affected_tasks=affected_tasks,
+    )
+
+
 @router.post(
     "/impact-assessment",
     response_model=ImpactAssessmentResponse,
@@ -54,43 +206,45 @@ def assess_change_impact(
     request: ImpactAssessmentRequest,
 ) -> ImpactAssessmentResponse:
 
+    resolved = _resolve_impact_inputs(request)
+
     schedule_score = 0
 
-    if request.additional_work_days > 0:
-        schedule_score += min(request.additional_work_days * 8, 60)
+    if resolved.additional_work_days > 0:
+        schedule_score += min(resolved.additional_work_days * 8, 60)
 
-    if request.remaining_days == 0 and request.additional_work_days > 0:
+    if resolved.remaining_days == 0 and resolved.additional_work_days > 0:
         schedule_score += 40
     elif (
-        request.remaining_days > 0
-        and request.additional_work_days >= request.remaining_days
+        resolved.remaining_days > 0
+        and resolved.additional_work_days >= resolved.remaining_days
     ):
         schedule_score += 30
     elif (
-        request.remaining_days > 0
-        and request.additional_work_days
-        >= request.remaining_days * 0.5
+        resolved.remaining_days > 0
+        and resolved.additional_work_days
+        >= resolved.remaining_days * 0.5
     ):
         schedule_score += 20
 
     schedule_score = min(schedule_score, 100)
 
     scope_score = min(
-        request.affected_task_count * 10
-        + (30 if request.scope_changed else 0),
+        resolved.affected_task_count * 10
+        + (30 if resolved.scope_changed else 0),
         100,
     )
 
     resource_score = min(
-        request.affected_member_count * 15,
+        resolved.affected_member_count * 15,
         100,
     )
 
     technical_change_count = sum(
         [
-            request.database_changed,
-            request.api_changed,
-            request.ui_changed,
+            resolved.database_changed,
+            resolved.api_changed,
+            resolved.ui_changed,
         ]
     )
 
@@ -117,7 +271,7 @@ def assess_change_impact(
             "프로젝트 일정과 마일스톤을 다시 산정하세요."
         )
 
-    if request.scope_changed:
+    if resolved.scope_changed:
         risk_factors.append(
             "기존 요구사항의 범위가 변경되었습니다."
         )
@@ -125,17 +279,17 @@ def assess_change_impact(
             "변경 범위에 대한 PM 승인을 진행하세요."
         )
 
-    if request.affected_task_count >= 3:
+    if resolved.affected_task_count >= 3:
         risk_factors.append(
-            f"관련 업무 {request.affected_task_count}개가 영향을 받습니다."
+            f"관련 업무 {resolved.affected_task_count}개가 영향을 받습니다."
         )
         recommended_actions.append(
             "관련 WBS와 업무 우선순위를 수정하세요."
         )
 
-    if request.affected_member_count >= 2:
+    if resolved.affected_member_count >= 2:
         risk_factors.append(
-            f"팀원 {request.affected_member_count}명이 영향을 받습니다."
+            f"팀원 {resolved.affected_member_count}명이 영향을 받습니다."
         )
         recommended_actions.append(
             "담당자 업무량과 재배정 필요 여부를 검토하세요."
@@ -144,11 +298,11 @@ def assess_change_impact(
     if technical_change_count > 0:
         changed_areas = []
 
-        if request.database_changed:
+        if resolved.database_changed:
             changed_areas.append("데이터베이스")
-        if request.api_changed:
+        if resolved.api_changed:
             changed_areas.append("API")
-        if request.ui_changed:
+        if resolved.ui_changed:
             changed_areas.append("UI")
 
         risk_factors.append(
@@ -177,6 +331,17 @@ def assess_change_impact(
         technical_impact_score=technical_score,
         risk_factors=risk_factors,
         recommended_actions=recommended_actions,
+        llm_status=resolved.llm_status,
+        ai_summary=resolved.ai_summary,
+        affected_task_count=resolved.affected_task_count,
+        affected_member_count=resolved.affected_member_count,
+        remaining_days=resolved.remaining_days,
+        additional_work_days=resolved.additional_work_days,
+        scope_changed=resolved.scope_changed,
+        database_changed=resolved.database_changed,
+        api_changed=resolved.api_changed,
+        ui_changed=resolved.ui_changed,
+        affected_tasks=resolved.affected_tasks,
     )
 
 
