@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException
 
 from .graph import PlanningResourceGraph
@@ -6,6 +8,14 @@ from .llm_service import (
     ResourceLLMGenerationError,
 )
 from .schemas import PlanningResourceRequest, PlanningResourceResponse
+from .organization_chart import (
+    OrganizationChartConfigurationError,
+    OrganizationChartGenerationRequest,
+    OrganizationChartGenerationResponse,
+    OrganizationChartRenderError,
+    render_organization_chart,
+)
+from .view_builders import build_organization_chart
 
 
 router = APIRouter(
@@ -32,3 +42,44 @@ def recommend_planning_resources(request: PlanningResourceRequest) -> dict:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ResourceLLMGenerationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post(
+    "/organization-chart/generate",
+    response_model=OrganizationChartGenerationResponse,
+    summary="Generate an organization chart as JSON and JPG",
+)
+def generate_organization_chart(
+    request: OrganizationChartGenerationRequest,
+) -> OrganizationChartGenerationResponse:
+    try:
+        generated_at = datetime.now(timezone.utc)
+        recommendation = planning_resource_graph.invoke(request.planning_request)
+        organization = build_organization_chart(
+            request.planning_request,
+            recommendation,
+            generated_at=generated_at,
+            metadata=request.organization_metadata,
+        )
+        rendered = render_organization_chart(
+            request.planning_request,
+            organization,
+        )
+        return OrganizationChartGenerationResponse(
+            organization=organization,
+            file_name=(
+                f"project-{request.planning_request.project_id}"
+                "-organization-chart.jpg"
+            ),
+            image_base64=rendered.to_base64(),
+            width=rendered.width,
+            height=rendered.height,
+        )
+    except ResourceLLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ResourceLLMGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except OrganizationChartConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (OrganizationChartRenderError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
