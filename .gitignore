@@ -28,6 +28,8 @@ LOCAL_DECISIONS.md
 
 # Local backend integration specification
 docs/backend-ai-api-integration.md
+docs/backend-weekly-scrum-api-integration.md
+docs/backend-ai-api-changes-2026-08-05.md
 
 # Editor and operating-system files
 .vscode/
