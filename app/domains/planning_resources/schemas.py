@@ -66,17 +66,12 @@ class ProjectMemberCandidate(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     project_member_id: MemberId
-    member_name: str | None = Field(default=None, max_length=100)
     roles: list[str] = Field(min_length=1, max_length=20)
     skills: list[MemberSkill] = Field(default_factory=list, max_length=100)
     allocations: list[MemberAllocation] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def validate_member(self) -> "ProjectMemberCandidate":
-        if self.member_name is not None:
-            self.member_name = self.member_name.strip()
-            if not self.member_name:
-                raise ValueError("member_name cannot be blank")
         roles = []
         seen_roles = set()
         for role in self.roles:
@@ -96,7 +91,6 @@ class ProjectMemberCandidate(BaseModel):
 
 class PlanningResourceRequest(BaseModel):
     project_id: ProjectId
-    project_name: str | None = Field(default=None, max_length=200)
     wbs_tasks: list[ResourceWBSTask] = Field(min_length=1, max_length=200)
     project_members: list[ProjectMemberCandidate] = Field(
         min_length=1,
@@ -105,10 +99,6 @@ class PlanningResourceRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_request(self) -> "PlanningResourceRequest":
-        if self.project_name is not None:
-            self.project_name = self.project_name.strip()
-            if not self.project_name:
-                raise ValueError("project_name cannot be blank")
         wbs_ids = [task.wbs_id for task in self.wbs_tasks]
         if len(wbs_ids) != len(set(wbs_ids)):
             raise ValueError("WBS ID는 중복될 수 없습니다.")
