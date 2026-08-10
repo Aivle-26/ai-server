@@ -207,6 +207,28 @@ class OrganizationChartTest(unittest.TestCase):
             self.assertEqual(image.format, "JPEG")
             self.assertEqual(image.size, (rendered.width, rendered.height))
 
+    def test_render_content_summarizes_dense_wbs_and_warnings(self):
+        view = self.build_view(metadata_payload())
+        dense_team = view.teams[0].model_copy(
+            update={"assigned_wbs_ids": list(range(1, 9))}
+        )
+
+        content = chart_module._team_content(self.request, dense_team)
+        labels = [value for _, value in content]
+        warning_lines = chart_module._warning_summary(
+            view.model_copy(update={"unassigned_wbs_ids": list(range(1, 27))})
+        )
+
+        self.assertIn("담당 WBS  8건", labels)
+        self.assertIn("+ 5건", labels)
+        wbs_start = labels.index("담당 WBS  8건") + 1
+        self.assertEqual(
+            sum(label.startswith("• ") for label in labels[wbs_start:wbs_start + 4]),
+            3,
+        )
+        self.assertIn("미배정 WBS: 26건", warning_lines)
+        self.assertNotIn("26,", " ".join(warning_lines))
+
     def test_render_supports_missing_pm_and_long_names_without_overflow(self):
         payload = planning_payload()
         for index in range(13, 40):

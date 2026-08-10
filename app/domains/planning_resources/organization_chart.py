@@ -22,6 +22,9 @@ MAX_IMAGE_WIDTH = 7200
 MAX_IMAGE_HEIGHT = 7200
 MAX_IMAGE_PIXELS = 36_000_000
 MAX_RENDERED_MEMBERS = 500
+MAX_VISIBLE_MEMBERS = 5
+MAX_VISIBLE_WBS_ITEMS = 3
+MAX_VISIBLE_ROLE_GAPS = 3
 
 _FONT_CANDIDATES = (
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -109,10 +112,10 @@ def _load_fonts() -> _Fonts:
     path = str(_resolve_font_path())
     try:
         return _Fonts(
-            title=ImageFont.truetype(path, 34),
-            heading=ImageFont.truetype(path, 24),
-            body=ImageFont.truetype(path, 18),
-            small=ImageFont.truetype(path, 15),
+            title=ImageFont.truetype(path, 42),
+            heading=ImageFont.truetype(path, 28),
+            body=ImageFont.truetype(path, 21),
+            small=ImageFont.truetype(path, 18),
         )
     except OSError as exc:
         raise OrganizationChartConfigurationError(
@@ -176,12 +179,14 @@ def _team_content(
     task_names = {
         task.wbs_id: task.wbs_name for task in request.wbs_tasks
     }
+    role_label = " · ".join(team.primary_roles) or "역할 미정"
     lines: list[tuple[str, str]] = [
-        ("heading", team.team_name),
-        ("body", "대표 역할: " + ", ".join(team.primary_roles)),
+        ("small", "DELIVERY ROLE"),
+        ("heading", role_label),
+        ("body", team.team_name),
         (
             "body",
-            "팀장: "
+            "리더  "
             + (
                 _member_label(request, team.leader_member_id)
                 if team.leader_member_id is not None
@@ -190,20 +195,28 @@ def _team_content(
         ),
     ]
     if team.member_ids:
-        lines.append(("body", f"팀원 ({len(team.member_ids)}명)"))
+        lines.append(("body", f"팀원  {len(team.member_ids)}명"))
         multi_role = set(team.multi_role_members)
-        for member_id in team.member_ids:
+        visible_members = team.member_ids[:MAX_VISIBLE_MEMBERS]
+        for member_id in visible_members:
             suffix = " · 복수 역할" if member_id in multi_role else ""
-            lines.append(("small", f"- {_member_label(request, member_id)}{suffix}"))
+            lines.append(("small", f"• {_member_label(request, member_id)}{suffix}"))
+        hidden_member_count = len(team.member_ids) - len(visible_members)
+        if hidden_member_count:
+            lines.append(("small", f"+ {hidden_member_count}명"))
     else:
         lines.append(("body", "팀원: 배정 없음"))
 
     if team.assigned_wbs_ids:
-        lines.append(("body", "담당 WBS"))
-        for wbs_id in team.assigned_wbs_ids:
+        lines.append(("body", f"담당 WBS  {len(team.assigned_wbs_ids)}건"))
+        visible_wbs_ids = team.assigned_wbs_ids[:MAX_VISIBLE_WBS_ITEMS]
+        for wbs_id in visible_wbs_ids:
             lines.append(
-                ("small", f"- {task_names.get(wbs_id, f'WBS {wbs_id}')} (#{wbs_id})")
+                ("small", f"• {task_names.get(wbs_id, f'WBS {wbs_id}')}")
             )
+        hidden_wbs_count = len(team.assigned_wbs_ids) - len(visible_wbs_ids)
+        if hidden_wbs_count:
+            lines.append(("small", f"+ {hidden_wbs_count}건"))
     else:
         lines.append(("body", "담당 WBS: 없음"))
 
@@ -229,11 +242,28 @@ def _wrapped_lines(
 
 def _line_height(font: ImageFont.ImageFont) -> int:
     left, top, right, bottom = font.getbbox("Ag한")
-    return max(1, bottom - top) + 8
+    return max(1, bottom - top) + 10
 
 
 def _card_height(fonts: _Fonts, lines: Iterable[tuple[str, str]]) -> int:
-    return 34 + sum(_line_height(getattr(fonts, style)) for style, _ in lines) + 22
+    return 42 + sum(_line_height(getattr(fonts, style)) for style, _ in lines) + 26
+
+
+def _warning_summary(organization: OrganizationView) -> tuple[str, ...]:
+    lines = [
+        f"부족 역할: {len(organization.role_gaps)}종",
+        f"미배정 WBS: {len(organization.unassigned_wbs_ids)}건",
+    ]
+    visible_gaps = sorted(
+        organization.role_gaps,
+        key=lambda gap: gap.shortage_count,
+        reverse=True,
+    )[:MAX_VISIBLE_ROLE_GAPS]
+    lines.extend(f"{gap.role_code}  +{gap.shortage_count}" for gap in visible_gaps)
+    hidden_gap_count = len(organization.role_gaps) - len(visible_gaps)
+    if hidden_gap_count:
+        lines.append(f"+ {hidden_gap_count}개 역할")
+    return tuple(lines)
 
 
 def _validate_render_input(
@@ -262,15 +292,27 @@ def render_organization_chart(
     measurement_image = Image.new("RGB", (10, 10), "white")
     measurement_draw = ImageDraw.Draw(measurement_image)
 
-    card_width = 440
-    card_gap_x = 36
-    card_gap_y = 42
-    page_margin = 64
+    card_width = 500
+    card_gap_x = 44
+    card_gap_y = 48
+    page_margin = 56
     team_count = max(1, len(organization.teams))
-    columns = min(4, team_count)
+    columns = min(3, team_count)
     width = max(
-        1200,
+        1400,
         page_margin * 2 + columns * card_width + (columns - 1) * card_gap_x,
+    )
+    pm_width = min(640, width - page_margin * 2)
+    pm_label = (
+        _member_label(request, organization.project_manager)
+        if organization.project_manager is not None
+        else "PM 정보 없음"
+    )
+    pm_lines = _wrap_text(
+        measurement_draw,
+        pm_label,
+        fonts.heading,
+        pm_width - 56,
     )
 
     prepared: list[tuple[OrganizationTeam, tuple[tuple[str, str], ...], int]] = []
@@ -279,23 +321,28 @@ def render_organization_chart(
             measurement_draw,
             fonts,
             _team_content(request, team),
-            card_width - 48,
+            card_width - 56,
         )
         prepared.append((team, lines, _card_height(fonts, lines)))
 
-    title_bottom = 104
-    pm_top = 126
-    pm_height = 100
-    teams_top = pm_top + pm_height + 86
+    title_bottom = 118
+    pm_top = 142
+    pm_height = 74 + len(pm_lines) * _line_height(fonts.heading) + 20
+    teams_top = pm_top + pm_height + 92
     row_heights: list[int] = []
     for index in range(0, len(prepared), columns):
         row_heights.append(max(height for _, _, height in prepared[index:index + columns]))
     teams_height = sum(row_heights) + max(0, len(row_heights) - 1) * card_gap_y
-    warnings = len(organization.role_gaps) + bool(organization.unassigned_wbs_ids)
-    warnings_height = 82 + int(warnings) * 32 if warnings else 0
-    height = teams_top + teams_height + warnings_height + page_margin
-    if not organization.teams:
-        height = teams_top + 120 + warnings_height + page_margin
+    warnings = bool(organization.role_gaps or organization.unassigned_wbs_ids)
+    warning_lines = _warning_summary(organization) if warnings else ()
+    warnings_height = 86 + len(warning_lines) * 34 if warnings else 0
+    content_bottom = teams_top + teams_height if organization.teams else teams_top + 100
+    warning_top = content_bottom + 44
+    height = (
+        warning_top + warnings_height + page_margin
+        if warnings
+        else content_bottom + page_margin
+    )
 
     if (
         width > MAX_IMAGE_WIDTH
@@ -315,29 +362,26 @@ def render_organization_chart(
     pale = "#eff6ff"
 
     project_label = request.project_name or f"프로젝트 {request.project_id}"
-    draw.text((page_margin, 42), project_label, fill=dark, font=fonts.title)
+    draw.text((page_margin, 36), project_label, fill=dark, font=fonts.title)
     generated_label = organization.generated_at.isoformat()
     draw.text(
-        (page_margin, title_bottom - 24),
-        f"조직도 · 생성 시각 {generated_label}",
+        (page_margin, title_bottom - 22),
+        f"PROJECT ORGANIZATION  ·  {generated_label}",
         fill=muted,
         font=fonts.small,
     )
 
-    pm_width = min(560, width - page_margin * 2)
     pm_left = (width - pm_width) // 2
     draw.rounded_rectangle(
         (pm_left, pm_top, pm_left + pm_width, pm_top + pm_height),
         radius=14,
         fill=primary,
     )
-    draw.text((pm_left + 24, pm_top + 16), "PROJECT MANAGER", fill="white", font=fonts.small)
-    pm_label = (
-        _member_label(request, organization.project_manager)
-        if organization.project_manager is not None
-        else "PM 정보 없음"
-    )
-    draw.text((pm_left + 24, pm_top + 47), pm_label, fill="white", font=fonts.heading)
+    draw.text((pm_left + 28, pm_top + 18), "PROJECT MANAGER", fill="white", font=fonts.small)
+    pm_text_y = pm_top + 54
+    for line in pm_lines:
+        draw.text((pm_left + 28, pm_text_y), line, fill="white", font=fonts.heading)
+        pm_text_y += _line_height(fonts.heading)
 
     layouts: list[_CardLayout] = []
     row_y = teams_top
@@ -407,14 +451,13 @@ def render_organization_chart(
             outline=border,
             width=2,
         )
-        cursor_y = layout.y + 20
+        cursor_y = layout.y + 24
         for style, line in layout.lines:
             font = getattr(fonts, style)
             color = primary if style == "heading" else dark if style == "body" else muted
-            draw.text((layout.x + 24, cursor_y), line, fill=color, font=font)
+            draw.text((layout.x + 28, cursor_y), line, fill=color, font=font)
             cursor_y += _line_height(font)
 
-    warning_y = teams_top + teams_height + 36
     if not organization.teams:
         draw.rounded_rectangle(
             (page_margin, teams_top, width - page_margin, teams_top + 90),
@@ -428,29 +471,31 @@ def render_organization_chart(
             fill=dark,
             font=fonts.body,
         )
-        warning_y = teams_top + 126
 
     if warnings:
-        draw.text((page_margin, warning_y), "인력 및 배정 경고", fill=dark, font=fonts.heading)
-        warning_y += 38
-        for gap in organization.role_gaps:
+        draw.rounded_rectangle(
+            (page_margin, warning_top, width - page_margin, warning_top + warnings_height),
+            radius=12,
+            fill="#f8fafc",
+            outline=border,
+            width=2,
+        )
+        draw.text(
+            (page_margin + 28, warning_top + 20),
+            "배정 현황",
+            fill=dark,
+            font=fonts.heading,
+        )
+        warning_y = warning_top + 66
+        for index, line in enumerate(warning_lines):
+            color = dark if index < 2 else muted
             draw.text(
-                (page_margin, warning_y),
-                f"- 부족 역할 {gap.role_code}: {gap.shortage_count}명",
-                fill="#b42318",
-                font=fonts.body,
+                (page_margin + 28, warning_y),
+                line,
+                fill=color,
+                font=fonts.body if index < 2 else fonts.small,
             )
-            warning_y += 32
-        if organization.unassigned_wbs_ids:
-            ids = ", ".join(str(item) for item in organization.unassigned_wbs_ids)
-            for line in _wrap_text(
-                draw,
-                f"- 미배정 WBS: {ids}",
-                fonts.body,
-                width - page_margin * 2,
-            ):
-                draw.text((page_margin, warning_y), line, fill="#b54708", font=fonts.body)
-                warning_y += 32
+            warning_y += 34
 
     output = BytesIO()
     image.save(output, format="JPEG", quality=JPEG_QUALITY, optimize=True)
