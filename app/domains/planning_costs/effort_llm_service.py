@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -30,8 +31,29 @@ class GeneratedWBSEffort(BaseModel):
         return self
 
 
+class GeneratedOverlapCandidate(BaseModel):
+    wbs_ids: list[int] = Field(min_length=2, max_length=10)
+    reason: str = Field(min_length=1, max_length=500)
+    recommendation: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def normalize_candidate(self) -> "GeneratedOverlapCandidate":
+        self.wbs_ids = list(dict.fromkeys(self.wbs_ids))
+        self.reason = self.reason.strip()
+        self.recommendation = self.recommendation.strip()
+        if len(self.wbs_ids) < 2:
+            raise ValueError("중복 후보에는 서로 다른 WBS가 두 개 이상 필요합니다.")
+        if not self.reason or not self.recommendation:
+            raise ValueError("중복 사유와 권고사항은 비어 있을 수 없습니다.")
+        return self
+
+
 class GeneratedEffortPlan(BaseModel):
     wbs_efforts: list[GeneratedWBSEffort] = Field(min_length=1, max_length=200)
+    overlap_candidates: list[GeneratedOverlapCandidate] = Field(
+        default_factory=list,
+        max_length=100,
+    )
 
 
 class EffortLLMConfigurationError(RuntimeError):
@@ -43,6 +65,9 @@ class EffortLLMGenerationError(RuntimeError):
 
 
 class PlanningEffortLLMService:
+    MAX_TASKS_PER_BATCH = 30
+    MAX_CONCURRENT_BATCHES = 3
+
     def generate(self, context: dict) -> GeneratedEffortPlan:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -51,14 +76,99 @@ class PlanningEffortLLMService:
             )
 
         try:
-            client = OpenAI(api_key=api_key, timeout=60, max_retries=1)
-            return self._request(client, context)
+            batches = self._split_context(context)
+            if len(batches) == 1:
+                client = OpenAI(api_key=api_key, timeout=60, max_retries=1)
+                return self._request(client, batches[0])
+
+            plans: list[GeneratedEffortPlan | None] = [None] * len(batches)
+            with ThreadPoolExecutor(
+                max_workers=min(self.MAX_CONCURRENT_BATCHES, len(batches))
+            ) as executor:
+                futures = {
+                    executor.submit(self._generate_batch, api_key, batch): index
+                    for index, batch in enumerate(batches)
+                }
+                for future in as_completed(futures):
+                    plans[futures[future]] = future.result()
+            return self._merge_plans([plan for plan in plans if plan is not None])
         except EffortLLMGenerationError:
             raise
         except Exception as exc:
             raise EffortLLMGenerationError(
                 "OpenAI KOSA 직무·공수 산정 요청에 실패했습니다."
             ) from exc
+
+    def _generate_batch(self, api_key: str, context: dict) -> GeneratedEffortPlan:
+        client = OpenAI(api_key=api_key, timeout=60, max_retries=1)
+        return self._request(client, context)
+
+    def _split_context(self, context: dict) -> list[dict]:
+        tasks = context.get("wbs_tasks", [])
+        if len(tasks) <= self.MAX_TASKS_PER_BATCH:
+            return [context]
+
+        groups: dict[tuple, list[dict]] = {}
+        for task in tasks:
+            package_key = (
+                "package",
+                task["work_package_id"],
+            ) if task.get("work_package_id") is not None else (
+                "ungrouped",
+                task["wbs_id"],
+            )
+            groups.setdefault(package_key, []).append(task)
+
+        task_batches: list[list[dict]] = []
+        current: list[dict] = []
+        for group in groups.values():
+            if len(group) <= self.MAX_TASKS_PER_BATCH:
+                if current and len(current) + len(group) > self.MAX_TASKS_PER_BATCH:
+                    task_batches.append(current)
+                    current = []
+                current.extend(group)
+                continue
+
+            if current:
+                task_batches.append(current)
+                current = []
+            for offset in range(0, len(group), self.MAX_TASKS_PER_BATCH):
+                chunk = group[offset:offset + self.MAX_TASKS_PER_BATCH]
+                if len(chunk) == self.MAX_TASKS_PER_BATCH:
+                    task_batches.append(chunk)
+                else:
+                    current = chunk
+        if current:
+            task_batches.append(current)
+
+        return [
+            {
+                **context,
+                "wbs_tasks": batch,
+                "batch_index": index,
+                "batch_count": len(task_batches),
+            }
+            for index, batch in enumerate(task_batches, start=1)
+        ]
+
+    def _merge_plans(
+        self,
+        plans: list[GeneratedEffortPlan],
+    ) -> GeneratedEffortPlan:
+        efforts = []
+        candidates = []
+        seen_candidates: set[tuple[int, ...]] = set()
+        for plan in plans:
+            efforts.extend(plan.wbs_efforts)
+            for candidate in plan.overlap_candidates:
+                key = tuple(sorted(candidate.wbs_ids))
+                if key not in seen_candidates:
+                    seen_candidates.add(key)
+                    candidates.append(candidate)
+        return GeneratedEffortPlan(
+            wbs_efforts=efforts,
+            overlap_candidates=candidates,
+        )
 
     def _request(self, client: OpenAI, context: dict) -> GeneratedEffortPlan:
         try:
@@ -96,4 +206,7 @@ class PlanningEffortLLMService:
             "생성하지 마세요. estimation_reason은 세부직무 선택과 공수 판단 근거가 드러나는 "
             "간결한 한국어 한 문장으로 작성하고 confidence는 근거의 충분성에 따라 0부터 "
             "1 사이로 반환하세요."
+            " 같은 결과 묶음 안에서 설명과 산출물이 실질적으로 같은 WBS가 있으면 "
+            "overlap_candidates에 WBS ID, 중복 사유, 합치거나 범위를 분리하는 권고를 반환하세요. "
+            "직무가 같다는 이유만으로 중복 처리하지 말고, 중복 후보를 임의로 삭제하거나 공수에서 빼지 마세요."
         )
