@@ -12,6 +12,9 @@ from app.domains.planning_documents.router import (
 from app.domains.planning_resources.router import (
     router as planning_resources_router,
 )
+from app.domains.planning_resources.ui_mockup_router import (
+    router as ui_mockup_router,
+)
 from app.domains.planning_schedule.router import (
     router as planning_schedule_router,
 )
@@ -38,6 +41,7 @@ app.include_router(planning_documents_router)
 app.include_router(planning_wbs_router)
 app.include_router(planning_schedule_router)
 app.include_router(planning_resources_router)
+app.include_router(ui_mockup_router)
 app.include_router(planning_costs_router)
 app.include_router(reporting_router)
 
