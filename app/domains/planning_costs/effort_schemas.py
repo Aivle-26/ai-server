@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -125,6 +126,11 @@ class EffortWBSTask(BaseModel):
     wbs_id: WbsId
     wbs_name: str = Field(max_length=200)
     description: str = Field(max_length=4_000)
+    parent_wbs_id: WbsId | None = None
+    level: Literal[1, 2, 3] | None = None
+    item_type: Literal["PHASE", "WORK_PACKAGE", "TASK"] | None = None
+    work_package_id: WbsId | None = None
+    work_package_name: str | None = Field(default=None, max_length=200)
     start_date: date | None = None
     end_date: date | None = None
 
@@ -132,10 +138,19 @@ class EffortWBSTask(BaseModel):
     def validate_task(self) -> "EffortWBSTask":
         self.wbs_name = self.wbs_name.strip()
         self.description = self.description.strip()
+        if self.work_package_name is not None:
+            self.work_package_name = self.work_package_name.strip() or None
         if not self.wbs_name or not self.description:
             raise ValueError("WBS 작업명과 설명은 비어 있을 수 없습니다.")
         if self.start_date and self.end_date and self.end_date < self.start_date:
             raise ValueError("WBS 종료일은 시작일보다 빠를 수 없습니다.")
+        if self.parent_wbs_id == self.wbs_id:
+            raise ValueError("WBS는 자기 자신을 부모로 지정할 수 없습니다.")
+        expected_type = {1: "PHASE", 2: "WORK_PACKAGE", 3: "TASK"}
+        if self.level and self.item_type and expected_type[self.level] != self.item_type:
+            raise ValueError("WBS level과 item_type이 일치하지 않습니다.")
+        if (self.work_package_id is None) != (self.work_package_name is None):
+            raise ValueError("작업 패키지 ID와 이름은 함께 입력해야 합니다.")
         return self
 
 
@@ -152,12 +167,30 @@ class PlanningEffortEstimateRequest(BaseModel):
         wbs_ids = [task.wbs_id for task in self.wbs_tasks]
         if len(wbs_ids) != len(set(wbs_ids)):
             raise ValueError("WBS ID는 중복될 수 없습니다.")
+        selected_ids = set(wbs_ids)
+        if any(task.parent_wbs_id in selected_ids for task in self.wbs_tasks):
+            raise ValueError("부모 WBS와 자식 WBS를 동시에 공수 산정할 수 없습니다.")
+        package_names: dict[int, str] = {}
+        for task in self.wbs_tasks:
+            if task.work_package_id is None or task.work_package_name is None:
+                continue
+            previous_name = package_names.setdefault(
+                task.work_package_id,
+                task.work_package_name,
+            )
+            if previous_name != task.work_package_name:
+                raise ValueError("같은 작업 패키지 ID에는 같은 이름을 사용해야 합니다.")
         return self
 
 
 class WBSEffortEstimate(BaseModel):
     wbs_id: WbsId
     wbs_name: str
+    parent_wbs_id: WbsId | None = None
+    level: Literal[1, 2, 3] | None = None
+    item_type: Literal["PHASE", "WORK_PACKAGE", "TASK"] | None = None
+    work_package_id: WbsId | None = None
+    work_package_name: str | None = None
     kosa_job_category: KosaJobCategory
     detailed_job: KosaDetailedJob
     estimated_person_days: float = Field(gt=0)
@@ -174,11 +207,28 @@ class KosaJobEffort(BaseModel):
     wbs_ids: list[WbsId] = Field(min_length=1)
 
 
+class WorkPackageEffort(BaseModel):
+    work_package_id: WbsId
+    work_package_name: str
+    estimated_person_days: float = Field(gt=0)
+    estimated_mm: float = Field(gt=0)
+    wbs_ids: list[WbsId] = Field(min_length=1)
+    job_efforts: list[KosaJobEffort] = Field(min_length=1)
+
+
+class EffortOverlapCandidate(BaseModel):
+    wbs_ids: list[WbsId] = Field(min_length=2)
+    reason: str
+    recommendation: str
+
+
 class PlanningEffortEstimateResponse(BaseModel):
     project_id: ProjectId
     workdays_per_month: float = Field(gt=0)
     wbs_efforts: list[WBSEffortEstimate] = Field(min_length=1)
     job_efforts: list[KosaJobEffort] = Field(min_length=1)
+    work_package_efforts: list[WorkPackageEffort] = Field(default_factory=list)
+    overlap_candidates: list[EffortOverlapCandidate] = Field(default_factory=list)
     total_estimated_person_days: float = Field(gt=0)
     total_estimated_mm: float = Field(gt=0)
     llm_status: LLMStatus

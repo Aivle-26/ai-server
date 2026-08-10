@@ -49,7 +49,8 @@ def estimate_planning_cost(request: PlanningCostRequest) -> dict:
     description=(
         "WBS별로 2026년 적용 KOSA 세부직무와 예상 인일을 AI가 산정하고, "
         "공식 상위직무를 서버에서 매핑합니다. 20.5 근무일을 1 M/M으로 적용한 "
-        "WBS별 상세 근거와 세부직무별 합계를 반환합니다."
+        "WBS별 상세 근거, 작업 패키지·세부직무별 합계와 의미상 중복 후보를 반환합니다. "
+        "부모·자식 WBS를 동시에 보내면 중복 합산 방지를 위해 요청을 거부합니다."
     ),
 )
 def estimate_planning_effort(
