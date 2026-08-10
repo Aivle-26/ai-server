@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -67,6 +68,51 @@ class UiMockupGenerationRequest(BaseModel):
         min_length=1,
         max_length=60,
     )
+
+
+UiMockupNecessity = Literal["REQUIRED", "RECOMMENDED", "NOT_NEEDED"]
+
+
+class UiMockupNecessityDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: UiMockupNecessity
+    reason: str = Field(min_length=1, max_length=300)
+    evidence_requirement_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+    candidate_screens: list[str] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def normalize(self) -> "UiMockupNecessityDecision":
+        self.reason = " ".join(self.reason.split())
+        if not re.search(r"[가-힣]", self.reason):
+            raise ValueError("reason must be written in Korean")
+        sentences = [
+            sentence.strip()
+            for sentence in re.split(r"[.!?。！？]+", self.reason)
+            if sentence.strip()
+        ]
+        if len(sentences) > 2:
+            raise ValueError("reason must contain at most two sentences")
+        self.evidence_requirement_ids = list(
+            dict.fromkeys(self.evidence_requirement_ids)
+        )
+        self.candidate_screens = list(dict.fromkeys(
+            screen.strip()[:60]
+            for screen in self.candidate_screens
+            if screen.strip()
+        ))
+        if self.decision != "NOT_NEEDED" and not self.candidate_screens:
+            raise ValueError(
+                "REQUIRED or RECOMMENDED decisions need candidate screens"
+            )
+        return self
+
+
+class UiMockupNecessityResponse(UiMockupNecessityDecision):
+    project_id: int = Field(gt=0)
 
 
 class UiMockupSection(BaseModel):

@@ -4,6 +4,7 @@ from .ui_mockup import (
     UiMockupConfigurationError,
     UiMockupGenerationRequest,
     UiMockupGenerationResponse,
+    UiMockupNecessityResponse,
     UiMockupRenderError,
     render_ui_mockup,
 )
@@ -19,6 +20,26 @@ router = APIRouter(
     tags=["Planning UI Mockup"],
 )
 ui_mockup_service = UiMockupLLMService()
+
+
+@router.post(
+    "/assess",
+    response_model=UiMockupNecessityResponse,
+    summary="Assess whether a project benefits from a UI mockup",
+)
+def assess_ui_mockup_necessity(
+    request: UiMockupGenerationRequest,
+) -> UiMockupNecessityResponse:
+    try:
+        decision = ui_mockup_service.assess(request)
+        return UiMockupNecessityResponse(
+            project_id=request.project_id,
+            **decision.model_dump(),
+        )
+    except UiMockupLLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except UiMockupLLMGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post(
