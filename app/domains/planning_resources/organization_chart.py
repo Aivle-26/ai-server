@@ -22,7 +22,6 @@ MAX_IMAGE_WIDTH = 7200
 MAX_IMAGE_HEIGHT = 7200
 MAX_IMAGE_PIXELS = 36_000_000
 MAX_RENDERED_MEMBERS = 500
-MAX_VISIBLE_MEMBERS = 5
 MAX_VISIBLE_WBS_ITEMS = 3
 MAX_VISIBLE_ROLE_GAPS = 3
 
@@ -175,37 +174,21 @@ def _member_label(request: PlanningResourceRequest, member_id: int) -> str:
 def _team_content(
     request: PlanningResourceRequest,
     team: OrganizationTeam,
+    *,
+    section_label: str = "PROJECT MEMBER",
 ) -> list[tuple[str, str]]:
     task_names = {
         task.wbs_id: task.wbs_name for task in request.wbs_tasks
     }
-    role_label = " · ".join(team.primary_roles) or "역할 미정"
+    member_id = team.member_ids[0]
+    primary_role = " · ".join(team.primary_roles) or "역할 미정"
     lines: list[tuple[str, str]] = [
-        ("small", "DELIVERY ROLE"),
-        ("heading", role_label),
-        ("body", team.team_name),
-        (
-            "body",
-            "리더  "
-            + (
-                _member_label(request, team.leader_member_id)
-                if team.leader_member_id is not None
-                else "미지정"
-            ),
-        ),
+        ("small", section_label),
+        ("heading", _member_label(request, member_id)),
+        ("body", f"주 역할  {primary_role}"),
     ]
-    if team.member_ids:
-        lines.append(("body", f"팀원  {len(team.member_ids)}명"))
-        multi_role = set(team.multi_role_members)
-        visible_members = team.member_ids[:MAX_VISIBLE_MEMBERS]
-        for member_id in visible_members:
-            suffix = " · 복수 역할" if member_id in multi_role else ""
-            lines.append(("small", f"• {_member_label(request, member_id)}{suffix}"))
-        hidden_member_count = len(team.member_ids) - len(visible_members)
-        if hidden_member_count:
-            lines.append(("small", f"+ {hidden_member_count}명"))
-    else:
-        lines.append(("body", "팀원: 배정 없음"))
+    if team.secondary_roles:
+        lines.append(("body", "겸임  " + " · ".join(team.secondary_roles)))
 
     if team.assigned_wbs_ids:
         lines.append(("body", f"담당 WBS  {len(team.assigned_wbs_ids)}건"))
@@ -220,9 +203,6 @@ def _team_content(
     else:
         lines.append(("body", "담당 WBS: 없음"))
 
-    lines.append(("small", f"상위 보고: {team.reports_to or '미지정'}"))
-    collaborators = ", ".join(team.collaborates_with) or "미지정"
-    lines.append(("small", f"협업 팀: {collaborators}"))
     return lines
 
 
@@ -250,19 +230,16 @@ def _card_height(fonts: _Fonts, lines: Iterable[tuple[str, str]]) -> int:
 
 
 def _warning_summary(organization: OrganizationView) -> tuple[str, ...]:
-    lines = [
-        f"부족 역할: {len(organization.role_gaps)}종",
-        f"미배정 WBS: {len(organization.unassigned_wbs_ids)}건",
-    ]
-    visible_gaps = sorted(
-        organization.role_gaps,
-        key=lambda gap: gap.shortage_count,
-        reverse=True,
-    )[:MAX_VISIBLE_ROLE_GAPS]
-    lines.extend(f"{gap.role_code}  +{gap.shortage_count}" for gap in visible_gaps)
+    lines = [f"미배정 WBS: {len(organization.unassigned_wbs_ids)}건"]
+    visible_gaps = organization.role_gaps[:MAX_VISIBLE_ROLE_GAPS]
+    for gap in visible_gaps:
+        warning = f"{gap.role_code} 역할 추가 인력 권장"
+        if gap.wbs_ids:
+            warning += f" · 미배정 관련 WBS {len(gap.wbs_ids)}건"
+        lines.append(warning)
     hidden_gap_count = len(organization.role_gaps) - len(visible_gaps)
     if hidden_gap_count:
-        lines.append(f"+ {hidden_gap_count}개 역할")
+        lines.append(f"+ {hidden_gap_count}개 역할 추가 검토 필요")
     return tuple(lines)
 
 
@@ -274,7 +251,31 @@ def _validate_render_input(
         raise OrganizationChartRenderError(
             "organization project_id does not match the planning request"
         )
-    member_count = sum(len(team.member_ids) for team in organization.teams)
+    request_member_ids = {
+        member.project_member_id for member in request.project_members
+    }
+    displayed_member_ids = [
+        member_id
+        for team in organization.teams
+        for member_id in team.member_ids
+    ]
+    if len(displayed_member_ids) != len(set(displayed_member_ids)):
+        raise OrganizationChartRenderError(
+            "organization cannot display the same member more than once"
+        )
+    if not set(displayed_member_ids).issubset(request_member_ids):
+        raise OrganizationChartRenderError(
+            "organization members must come from the planning request"
+        )
+    if any(not team.member_ids for team in organization.teams):
+        raise OrganizationChartRenderError(
+            "organization cannot render empty role nodes"
+        )
+    member_count = len(displayed_member_ids)
+    if member_count > len(request_member_ids):
+        raise OrganizationChartRenderError(
+            "organization exceeds the real project member count"
+        )
     if member_count > MAX_RENDERED_MEMBERS:
         raise OrganizationChartRenderError(
             f"organization exceeds the {MAX_RENDERED_MEMBERS} member render limit"
@@ -296,27 +297,41 @@ def render_organization_chart(
     card_gap_x = 44
     card_gap_y = 48
     page_margin = 56
-    team_count = max(1, len(organization.teams))
+    pm_team = next(
+        (
+            team
+            for team in organization.teams
+            if organization.project_manager in team.member_ids
+        ),
+        None,
+    )
+    delivery_teams = [
+        team for team in organization.teams if team is not pm_team
+    ]
+    team_count = max(1, len(delivery_teams))
     columns = min(3, team_count)
     width = max(
         1400,
         page_margin * 2 + columns * card_width + (columns - 1) * card_gap_x,
     )
     pm_width = min(640, width - page_margin * 2)
-    pm_label = (
-        _member_label(request, organization.project_manager)
-        if organization.project_manager is not None
-        else "PM 정보 없음"
-    )
-    pm_lines = _wrap_text(
-        measurement_draw,
-        pm_label,
-        fonts.heading,
-        pm_width - 56,
+    pm_lines = (
+        _wrapped_lines(
+            measurement_draw,
+            fonts,
+            _team_content(
+                request,
+                pm_team,
+                section_label="PROJECT MANAGER",
+            ),
+            pm_width - 56,
+        )
+        if pm_team is not None
+        else ()
     )
 
     prepared: list[tuple[OrganizationTeam, tuple[tuple[str, str], ...], int]] = []
-    for team in organization.teams:
+    for team in delivery_teams:
         lines = _wrapped_lines(
             measurement_draw,
             fonts,
@@ -327,8 +342,12 @@ def render_organization_chart(
 
     title_bottom = 118
     pm_top = 142
-    pm_height = 74 + len(pm_lines) * _line_height(fonts.heading) + 20
-    teams_top = pm_top + pm_height + 92
+    pm_height = _card_height(fonts, pm_lines) if pm_lines else 0
+    teams_top = (
+        pm_top + pm_height + 92
+        if pm_lines
+        else title_bottom + 72
+    )
     row_heights: list[int] = []
     for index in range(0, len(prepared), columns):
         row_heights.append(max(height for _, _, height in prepared[index:index + columns]))
@@ -336,7 +355,11 @@ def render_organization_chart(
     warnings = bool(organization.role_gaps or organization.unassigned_wbs_ids)
     warning_lines = _warning_summary(organization) if warnings else ()
     warnings_height = 86 + len(warning_lines) * 34 if warnings else 0
-    content_bottom = teams_top + teams_height if organization.teams else teams_top + 100
+    content_bottom = (
+        teams_top + teams_height
+        if delivery_teams
+        else (pm_top + pm_height if pm_lines else teams_top + 100)
+    )
     warning_top = content_bottom + 44
     height = (
         warning_top + warnings_height + page_margin
@@ -371,17 +394,23 @@ def render_organization_chart(
         font=fonts.small,
     )
 
-    pm_left = (width - pm_width) // 2
-    draw.rounded_rectangle(
-        (pm_left, pm_top, pm_left + pm_width, pm_top + pm_height),
-        radius=14,
-        fill=primary,
-    )
-    draw.text((pm_left + 28, pm_top + 18), "PROJECT MANAGER", fill="white", font=fonts.small)
-    pm_text_y = pm_top + 54
-    for line in pm_lines:
-        draw.text((pm_left + 28, pm_text_y), line, fill="white", font=fonts.heading)
-        pm_text_y += _line_height(fonts.heading)
+    if pm_lines:
+        pm_left = (width - pm_width) // 2
+        draw.rounded_rectangle(
+            (pm_left, pm_top, pm_left + pm_width, pm_top + pm_height),
+            radius=14,
+            fill=primary,
+        )
+        pm_text_y = pm_top + 24
+        for style, line in pm_lines:
+            font = getattr(fonts, style)
+            draw.text(
+                (pm_left + 28, pm_text_y),
+                line,
+                fill="white",
+                font=font,
+            )
+            pm_text_y += _line_height(font)
 
     layouts: list[_CardLayout] = []
     row_y = teams_top
@@ -404,24 +433,35 @@ def render_organization_chart(
         row_y += row_height + card_gap_y
         item_index += columns
 
-    pm_center = (width // 2, pm_top + pm_height)
-    for layout in layouts:
-        team_center = (layout.x + layout.width // 2, layout.y)
-        draw.line(
-            (pm_center[0], pm_center[1], pm_center[0], team_center[1] - 28),
-            fill=border,
-            width=3,
-        )
-        draw.line(
-            (pm_center[0], team_center[1] - 28, team_center[0], team_center[1] - 28),
-            fill=border,
-            width=3,
-        )
-        draw.line(
-            (team_center[0], team_center[1] - 28, team_center[0], team_center[1]),
-            fill=border,
-            width=3,
-        )
+    if pm_lines:
+        pm_center = (width // 2, pm_top + pm_height)
+        for layout in layouts:
+            team_center = (layout.x + layout.width // 2, layout.y)
+            draw.line(
+                (pm_center[0], pm_center[1], pm_center[0], team_center[1] - 28),
+                fill=border,
+                width=3,
+            )
+            draw.line(
+                (
+                    pm_center[0],
+                    team_center[1] - 28,
+                    team_center[0],
+                    team_center[1] - 28,
+                ),
+                fill=border,
+                width=3,
+            )
+            draw.line(
+                (
+                    team_center[0],
+                    team_center[1] - 28,
+                    team_center[0],
+                    team_center[1],
+                ),
+                fill=border,
+                width=3,
+            )
 
     by_team_id = {layout.team.team_id: layout for layout in layouts}
     for layout in layouts:
@@ -467,7 +507,7 @@ def render_organization_chart(
         )
         draw.text(
             (page_margin + 24, teams_top + 28),
-            "추천된 역할별 팀이 없습니다.",
+            "표시할 프로젝트 멤버가 없습니다.",
             fill=dark,
             font=fonts.body,
         )

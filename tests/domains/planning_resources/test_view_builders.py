@@ -268,7 +268,7 @@ class ViewBuilderTestCase(unittest.TestCase):
         self.assertIsNone(result.project_manager)
         self.assertEqual(
             [team.team_id for team in result.teams],
-            ["team:101:BACKEND", "team:101:FRONTEND"],
+            ["member:101:1", "member:101:2"],
         )
         self.assertEqual(
             [team.member_ids for team in result.teams], [[1], [2]]
@@ -291,7 +291,7 @@ class ViewBuilderTestCase(unittest.TestCase):
                 {
                     "role_code": "FRONTEND",
                     "shortage_count": 1,
-                    "wbs_ids": [],
+                    "wbs_ids": [4],
                 }
             ],
         )
@@ -300,20 +300,31 @@ class ViewBuilderTestCase(unittest.TestCase):
         self.assertEqual(self.response.model_dump(mode="json"), response_before)
         self.assert_json_serializable(result)
 
-    def test_organization_marks_explicit_multi_role_members(self):
+    def test_organization_marks_members_assigned_to_multiple_roles(self):
         payload = request_payload()
-        payload["project_members"][0]["roles"].append("TECH_LEAD")
+        payload["project_members"][0]["roles"].append("FRONTEND")
         request = PlanningResourceRequest.model_validate(payload)
+        response = response_payload()
+        response["assignments"][1]["recommended_members"].append(
+            {
+                "project_member_id": 1,
+                "recommendation_score": 80,
+                "assigned_hours": 4,
+                "remaining_available_hours": 0,
+            }
+        )
 
         result = build_organization_chart(
             request,
-            self.response,
+            response,
             generated_at=FIXED_GENERATED_AT,
         )
 
+        self.assertEqual(result.teams[0].primary_roles, ["BACKEND"])
+        self.assertEqual(result.teams[0].secondary_roles, ["FRONTEND"])
         self.assertEqual(result.teams[0].multi_role_members, [1])
 
-    def test_organization_does_not_mark_unstaffed_wbs_as_assigned(self):
+    def test_organization_keeps_real_member_without_creating_empty_role_node(self):
         payload = response_payload()
         payload["assignments"][1]["recommended_members"] = []
 
@@ -323,11 +334,12 @@ class ViewBuilderTestCase(unittest.TestCase):
             generated_at=FIXED_GENERATED_AT,
         )
 
-        frontend_team = next(
-            team for team in result.teams if team.primary_roles == ["FRONTEND"]
+        frontend_member = next(
+            team for team in result.teams if team.member_ids == [2]
         )
-        self.assertEqual(frontend_team.member_ids, [])
-        self.assertEqual(frontend_team.assigned_wbs_ids, [])
+        self.assertEqual(frontend_member.primary_roles, ["FRONTEND"])
+        self.assertEqual(frontend_member.assigned_wbs_ids, [])
+        self.assertTrue(all(team.member_ids for team in result.teams))
         self.assertIn(4, result.unassigned_wbs_ids)
 
     def test_organization_only_uses_explicit_management_relationships(self):
@@ -358,12 +370,12 @@ class ViewBuilderTestCase(unittest.TestCase):
         )
 
         self.assertEqual(result.project_manager, 1)
-        self.assertEqual(result.teams[0].team_name, "API team")
+        self.assertEqual(result.teams[0].team_name, "ID 1")
         self.assertEqual(result.teams[0].leader_member_id, 1)
         self.assertEqual(
-            result.teams[0].collaborates_with, ["team:101:FRONTEND"]
+            result.teams[0].collaborates_with, ["member:101:2"]
         )
-        self.assertEqual(result.teams[1].reports_to, "team:101:BACKEND")
+        self.assertEqual(result.teams[1].reports_to, "member:101:1")
         self.assertEqual(metadata.model_dump(mode="json"), metadata_before)
 
     def test_organization_rejects_unknown_pm_leader_role_and_relationship(self):

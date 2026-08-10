@@ -208,6 +208,21 @@ class OrganizationView(BaseModel):
     def validate_references(self) -> "OrganizationView":
         team_ids = [team.team_id for team in self.teams]
         _ensure_unique(team_ids, "team_ids")
+        member_ids = [
+            member_id
+            for team in self.teams
+            for member_id in team.member_ids
+        ]
+        _ensure_unique(member_ids, "organization member_ids")
+        if any(not team.member_ids for team in self.teams):
+            raise ValueError("organization teams cannot be empty")
+        if (
+            self.project_manager is not None
+            and self.project_manager not in member_ids
+        ):
+            raise ValueError(
+                "project_manager must reference a displayed organization member"
+            )
         _ensure_unique(
             [gap.role_code for gap in self.role_gaps],
             "role gap role codes",

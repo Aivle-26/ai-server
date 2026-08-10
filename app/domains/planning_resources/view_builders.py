@@ -174,10 +174,103 @@ def _planning_context(
     )
 
 
-def _team_id(project_id: int, role_code: str) -> str:
-    """Create a stable boundary key solely from real project/role values."""
+def _member_team_id(project_id: int, member_id: int) -> str:
+    """Create a stable organization-node key from a real project member."""
 
-    return f"team:{project_id}:{role_code}"
+    return f"member:{project_id}:{member_id}"
+
+
+def _project_manager_member_id(
+    members: Sequence[ProjectMemberCandidate],
+    metadata: OrganizationMetadata,
+) -> int | None:
+    if metadata.project_manager_member_id is not None:
+        return metadata.project_manager_member_id
+    for member in members:
+        if any(role in {"PM", "PROJECT_MANAGER"} for role in member.roles):
+            return member.project_member_id
+    return None
+
+
+def _primary_role(
+    member: ProjectMemberCandidate,
+    assigned_roles: Sequence[str],
+    *,
+    is_project_manager: bool,
+) -> str:
+    if is_project_manager:
+        return next(
+            (
+                role
+                for role in member.roles
+                if role in {"PM", "PROJECT_MANAGER"}
+            ),
+            "PROJECT_MANAGER",
+        )
+    if not assigned_roles:
+        return member.roles[0]
+
+    counts = {
+        role: assigned_roles.count(role) for role in set(assigned_roles)
+    }
+    capability_order = {
+        role: index for index, role in enumerate(member.roles)
+    }
+    assignment_order = {
+        role: index for index, role in enumerate(_unique_text(assigned_roles))
+    }
+    return min(
+        counts,
+        key=lambda role: (
+            -counts[role],
+            capability_order.get(role, len(capability_order)),
+            assignment_order[role],
+        ),
+    )
+
+
+def _unique_text(values: Sequence[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value not in seen:
+            result.append(value)
+            seen.add(value)
+    return result
+
+
+def _validate_metadata_relationships(
+    metadata_by_role: Mapping[str, Any],
+    known_roles: set[str],
+) -> None:
+    for role_code, team_metadata in metadata_by_role.items():
+        references = {
+            *team_metadata.collaborates_with_role_codes,
+            *(
+                [team_metadata.reports_to_role_code]
+                if team_metadata.reports_to_role_code is not None
+                else []
+            ),
+        }
+        if not references.issubset(known_roles):
+            raise ValueError(
+                "organization relationships must reference assignment roles"
+            )
+
+    reports_to_by_role = {
+        role_code: team_metadata.reports_to_role_code
+        for role_code, team_metadata in metadata_by_role.items()
+    }
+    for role_code in reports_to_by_role:
+        path = {role_code}
+        current = role_code
+        while reports_to_by_role.get(current) is not None:
+            current = reports_to_by_role[current]
+            if current in path:
+                raise ValueError(
+                    "organization reporting relationships cannot form cycles"
+                )
+            path.add(current)
 
 
 def build_organization_chart(
@@ -189,9 +282,12 @@ def build_organization_chart(
 ) -> OrganizationView:
     """Build an organization view from assignments and optional facts.
 
-    A project manager, team leaders, reporting lines, and collaboration links
-    are never inferred.  They remain empty unless supplied in ``metadata``.
-    Teams are grouped by each assignment's real ``required_role_code``.
+    Explicit metadata wins for project management and reporting facts.  When
+    it is absent, only an actual member's declared PM capability may select
+    the project manager; no person or relationship is synthesized.
+    Each node represents one real request member.  Assignment roles determine
+    the member's primary and secondary roles without creating vacant role
+    nodes or synthetic people.
     """
 
     context = _planning_context(request, response)
@@ -208,20 +304,23 @@ def build_organization_chart(
         raise ValueError("project manager must reference a request member")
 
     role_order: list[str] = []
-    wbs_ids_by_role: dict[str, list[int]] = {}
     member_ids_by_role: dict[str, list[int]] = {}
+    roles_by_member_id: dict[int, list[str]] = {
+        member.project_member_id: [] for member in context.members
+    }
+    wbs_ids_by_member_id: dict[int, list[int]] = {
+        member.project_member_id: [] for member in context.members
+    }
     for assignment in context.response.assignments:
         role_code = _normalize_role_code(assignment.required_role_code)
-        if role_code not in wbs_ids_by_role:
+        if role_code not in member_ids_by_role:
             role_order.append(role_code)
-            wbs_ids_by_role[role_code] = []
             member_ids_by_role[role_code] = []
-        if assignment.recommended_members:
-            wbs_ids_by_role[role_code].append(assignment.wbs_id)
-        member_ids_by_role[role_code].extend(
-            recommendation.project_member_id
-            for recommendation in assignment.recommended_members
-        )
+        for recommendation in assignment.recommended_members:
+            member_id = recommendation.project_member_id
+            member_ids_by_role[role_code].append(member_id)
+            roles_by_member_id[member_id].append(role_code)
+            wbs_ids_by_member_id[member_id].append(assignment.wbs_id)
 
     metadata_by_role = {
         item.role_code: item for item in organization_metadata.teams
@@ -231,76 +330,102 @@ def build_organization_chart(
         raise ValueError(
             "organization team metadata must reference assignment roles"
         )
+    _validate_metadata_relationships(metadata_by_role, set(role_order))
 
-    team_id_by_role = {
-        role_code: _team_id(request.project_id, role_code)
-        for role_code in role_order
-    }
-    teams: list[OrganizationTeam] = []
-    for role_code in role_order:
-        team_metadata = metadata_by_role.get(role_code)
-        member_ids = _unique_in_order(member_ids_by_role[role_code])
+    for role_code, team_metadata in metadata_by_role.items():
+        assigned_member_ids = set(member_ids_by_role[role_code])
         if (
-            team_metadata is not None
-            and team_metadata.leader_member_id is not None
-            and team_metadata.leader_member_id not in member_ids
+            team_metadata.leader_member_id is not None
+            and team_metadata.leader_member_id not in assigned_member_ids
         ):
             raise ValueError("team leader must be an assigned team member")
 
+    role_representative: dict[str, int] = {}
+    for role_code in role_order:
+        assigned_member_ids = _unique_in_order(member_ids_by_role[role_code])
+        team_metadata = metadata_by_role.get(role_code)
+        if team_metadata is not None and team_metadata.leader_member_id is not None:
+            role_representative[role_code] = team_metadata.leader_member_id
+        elif assigned_member_ids:
+            role_representative[role_code] = assigned_member_ids[0]
+
+    project_manager = _project_manager_member_id(
+        context.members,
+        organization_metadata,
+    )
+    teams: list[OrganizationTeam] = []
+    for member in context.members:
+        member_id = member.project_member_id
+        assigned_roles = roles_by_member_id[member_id]
+        primary_role = _primary_role(
+            member,
+            assigned_roles,
+            is_project_manager=member_id == project_manager,
+        )
+        secondary_roles = [
+            role
+            for role in _unique_text(assigned_roles)
+            if role != primary_role
+        ]
+        team_metadata = next(
+            (
+                metadata_by_role[role]
+                for role in [primary_role, *secondary_roles]
+                if role in metadata_by_role
+            ),
+            None,
+        )
+        is_designated_leader = any(
+            metadata.leader_member_id == member_id
+            for metadata in metadata_by_role.values()
+        )
         reports_to = None
         collaborators: list[str] = []
         if team_metadata is not None:
             if team_metadata.reports_to_role_code is not None:
-                if team_metadata.reports_to_role_code not in team_id_by_role:
-                    raise ValueError(
-                        "reports_to role must reference an assignment team"
-                    )
-                reports_to = team_id_by_role[
+                target_member_id = role_representative.get(
                     team_metadata.reports_to_role_code
-                ]
-            unknown_collaboration_roles = (
-                set(team_metadata.collaborates_with_role_codes)
-                - set(team_id_by_role)
-            )
-            if unknown_collaboration_roles:
-                raise ValueError(
-                    "collaboration roles must reference assignment teams"
+                )
+                if target_member_id is None:
+                    raise ValueError(
+                        "reports_to role must have an assigned project member"
+                    )
+                reports_to = _member_team_id(
+                    request.project_id,
+                    target_member_id,
                 )
             collaborators = [
-                team_id_by_role[collaborator_role]
-                for collaborator_role in (
-                    team_metadata.collaborates_with_role_codes
-                )
+                _member_team_id(request.project_id, role_representative[role])
+                for role in team_metadata.collaborates_with_role_codes
+                if role in role_representative
             ]
 
-        multi_role_members = [
-            member_id
-            for member_id in member_ids
-            if len(context.member_by_id[member_id].roles) > 1
+        team_id = _member_team_id(request.project_id, member_id)
+        collaborators = [
+            collaborator
+            for collaborator in _unique_text(collaborators)
+            if collaborator != team_id
         ]
+        if reports_to == team_id:
+            reports_to = None
         teams.append(
             OrganizationTeam(
-                team_id=team_id_by_role[role_code],
-                team_name=(
-                    team_metadata.team_name
-                    if team_metadata is not None
-                    and team_metadata.team_name is not None
-                    else role_code
-                ),
+                team_id=team_id,
+                team_name=member.member_name or f"ID {member_id}",
                 leader_member_id=(
-                    team_metadata.leader_member_id
-                    if team_metadata is not None
-                    else None
+                    member_id if is_designated_leader else None
                 ),
-                member_ids=member_ids,
-                primary_roles=[role_code],
-                # The production member contract has no primary/secondary
-                # classification, so the builder does not manufacture one.
-                secondary_roles=[],
-                assigned_wbs_ids=wbs_ids_by_role[role_code],
+                member_ids=[member_id],
+                primary_roles=[primary_role],
+                secondary_roles=secondary_roles,
+                assigned_wbs_ids=_unique_in_order(
+                    wbs_ids_by_member_id[member_id]
+                ),
                 reports_to=reports_to,
                 collaborates_with=collaborators,
-                multi_role_members=multi_role_members,
+                multi_role_members=(
+                    [member_id] if secondary_roles else []
+                ),
             )
         )
 
@@ -309,19 +434,27 @@ def build_organization_chart(
         if staffing.shortage_count == 0:
             continue
         role_code = _normalize_role_code(staffing.role_code)
+        role_wbs_ids = [
+            wbs_id
+            for wbs_id in context.unassigned_wbs_ids
+            if (
+                (assignment := context.assignment_by_wbs_id.get(wbs_id))
+                is not None
+                and _normalize_role_code(assignment.required_role_code)
+                == role_code
+            )
+        ]
         role_gaps.append(
             OrganizationRoleGap(
                 role_code=role_code,
                 shortage_count=staffing.shortage_count,
-                # RequiredStaffing is role-aggregate and does not identify the
-                # WBS items that caused a shortage.  Do not invent that link.
-                wbs_ids=[],
+                wbs_ids=role_wbs_ids,
             )
         )
 
     return OrganizationView(
         project_id=request.project_id,
-        project_manager=organization_metadata.project_manager_member_id,
+        project_manager=project_manager,
         teams=teams,
         role_gaps=role_gaps,
         unassigned_wbs_ids=list(context.unassigned_wbs_ids),

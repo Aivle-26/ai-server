@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import os
 import unittest
+from datetime import datetime, timezone
 from io import BytesIO
 from unittest.mock import patch
 
@@ -154,6 +155,103 @@ def metadata_payload() -> dict:
     }
 
 
+def eight_member_planning_payload() -> dict:
+    member_roles = [
+        ["PM", "BACKEND"],
+        ["BACKEND", "DEVOPS"],
+        ["BACKEND"],
+        ["FRONTEND", "QA"],
+        ["FULLSTACK", "PLANNER"],
+        ["AI_DATA", "REQUIREMENT_ANALYST"],
+        ["FRONTEND"],
+        ["DEVOPS", "QA"],
+    ]
+    return {
+        "project_id": 88,
+        "project_name": "8명 소규모 프로젝트",
+        "wbs_tasks": [
+            {
+                "wbs_id": wbs_id,
+                "wbs_name": f"WBS 작업 {wbs_id}",
+                "description": f"소규모 프로젝트 작업 {wbs_id}",
+                "start_date": "2026-08-10",
+                "end_date": "2026-08-14",
+            }
+            for wbs_id in range(1, 10)
+        ],
+        "project_members": [
+            {
+                "project_member_id": member_id,
+                "member_name": f"프로젝트 멤버 {member_id}",
+                "roles": roles,
+                "skills": [],
+                "allocations": [],
+            }
+            for member_id, roles in enumerate(member_roles, start=101)
+        ],
+    }
+
+
+def _eight_member_assignment(
+    wbs_id: int,
+    role_code: str,
+    member_ids: list[int],
+) -> dict:
+    return {
+        "wbs_id": wbs_id,
+        "required_role_code": role_code,
+        "required_skills": [],
+        "estimated_person_days": 1,
+        "estimated_hours": 8,
+        "estimated_mm": 0.05,
+        "required_headcount": 1,
+        "recommended_members": [
+            {
+                "project_member_id": member_id,
+                "recommendation_score": 90,
+                "assigned_hours": 8,
+                "remaining_available_hours": 8,
+            }
+            for member_id in member_ids
+        ],
+        "recommendation_reason": "Representative small-team assignment",
+    }
+
+
+def eight_member_recommendation_payload() -> dict:
+    assignments = [
+        _eight_member_assignment(1, "BACKEND", [101]),
+        _eight_member_assignment(2, "PM", [101]),
+        _eight_member_assignment(3, "DEVOPS", [102]),
+        _eight_member_assignment(4, "BACKEND", [103]),
+        _eight_member_assignment(5, "FRONTEND", [104]),
+        _eight_member_assignment(6, "QA", [104]),
+        _eight_member_assignment(7, "FULLSTACK", [105]),
+        _eight_member_assignment(8, "AI_DATA", [106]),
+        _eight_member_assignment(9, "QA", []),
+    ]
+    return {
+        "project_id": 88,
+        "required_staffing": [
+            {
+                "role_code": "QA",
+                "required_headcount": 12,
+                "available_candidate_count": 1,
+                "shortage_count": 11,
+                "estimated_person_days": 11,
+                "estimated_mm": 0.5,
+            }
+        ],
+        "assignments": assignments,
+        "total_estimated_person_days": 9,
+        "total_estimated_hours": 72,
+        "total_estimated_mm": 0.45,
+        "unassigned_wbs_ids": [9],
+        "warnings": ["QA capacity needs review"],
+        "llm_status": "SUCCEEDED",
+    }
+
+
 def default_fonts() -> chart_module._Fonts:
     font = ImageFont.load_default()
     return chart_module._Fonts(font, font, font, font)
@@ -199,9 +297,14 @@ class OrganizationChartTest(unittest.TestCase):
         self.assertGreater(rendered.width, 0)
         self.assertGreater(rendered.height, 0)
         self.assertEqual(view.project_manager, 10)
-        self.assertEqual(len(view.teams), 2)
-        self.assertEqual(view.teams[0].multi_role_members, [11])
+        self.assertEqual(len(view.teams), 3)
+        self.assertEqual(
+            [member_id for team in view.teams for member_id in team.member_ids],
+            [10, 11, 12],
+        )
+        self.assertEqual(view.teams[1].multi_role_members, [])
         self.assertEqual(view.role_gaps[0].role_code, "FRONTEND")
+        self.assertEqual(view.role_gaps[0].wbs_ids, [6])
         self.assertEqual(view.unassigned_wbs_ids, [6])
         with Image.open(BytesIO(rendered.content)) as image:
             self.assertEqual(image.format, "JPEG")
@@ -228,6 +331,8 @@ class OrganizationChartTest(unittest.TestCase):
         )
         self.assertIn("미배정 WBS: 26건", warning_lines)
         self.assertNotIn("26,", " ".join(warning_lines))
+        self.assertIn("FRONTEND 역할 추가 인력 권장", warning_lines[1])
+        self.assertNotIn("1명 부족", " ".join(warning_lines))
 
     def test_render_supports_missing_pm_and_long_names_without_overflow(self):
         payload = planning_payload()
@@ -263,9 +368,51 @@ class OrganizationChartTest(unittest.TestCase):
         with patch.object(chart_module, "_load_fonts", default_fonts):
             rendered = render_organization_chart(request, view)
 
-        self.assertIsNone(view.project_manager)
+        self.assertEqual(view.project_manager, 10)
         self.assertLessEqual(rendered.width, chart_module.MAX_IMAGE_WIDTH)
         self.assertLessEqual(rendered.height, chart_module.MAX_IMAGE_HEIGHT)
+
+    def test_eight_member_chart_uses_only_real_people_and_renders_jpeg(self):
+        request = PlanningResourceRequest.model_validate(
+            eight_member_planning_payload()
+        )
+        view = build_organization_chart(
+            request,
+            eight_member_recommendation_payload(),
+            generated_at=datetime(2026, 8, 10, 1, 0, tzinfo=timezone.utc),
+        )
+
+        displayed_member_ids = [
+            member_id
+            for team in view.teams
+            for member_id in team.member_ids
+        ]
+        input_member_ids = {
+            member.project_member_id for member in request.project_members
+        }
+        multi_role_teams = [
+            team for team in view.teams if team.secondary_roles
+        ]
+        warning_text = " ".join(chart_module._warning_summary(view))
+
+        self.assertEqual(len(input_member_ids), 8)
+        self.assertEqual(len(displayed_member_ids), 8)
+        self.assertEqual(len(set(displayed_member_ids)), 8)
+        self.assertTrue(set(displayed_member_ids).issubset(input_member_ids))
+        self.assertTrue(all(len(team.member_ids) == 1 for team in view.teams))
+        self.assertEqual(len(multi_role_teams), 2)
+        self.assertEqual(view.unassigned_wbs_ids, [9])
+        self.assertEqual(view.role_gaps[0].wbs_ids, [9])
+        self.assertIn("QA 역할 추가 인력 권장", warning_text)
+        self.assertIn("미배정 관련 WBS 1건", warning_text)
+        self.assertNotIn("11명 부족", warning_text)
+
+        with patch.object(chart_module, "_load_fonts", default_fonts):
+            rendered = render_organization_chart(request, view)
+
+        self.assertTrue(rendered.content.startswith(b"\xff\xd8\xff"))
+        with Image.open(BytesIO(rendered.content)) as image:
+            self.assertEqual(image.format, "JPEG")
 
     def test_builder_rejects_invalid_pm_leader_relationship_and_cycle(self):
         invalid = [
