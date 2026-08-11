@@ -10,7 +10,9 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import httpx
 from fastapi.testclient import TestClient
+from openai import APITimeoutError
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import ValidationError
 
@@ -1092,6 +1094,11 @@ def assessment_payload(*descriptions: str) -> dict:
 
 
 class UiMockupTest(unittest.TestCase):
+    @staticmethod
+    def _diagnostic_payload(log_output: str) -> dict:
+        marker = "ui_mockup_generation_diagnostic "
+        return json.loads(log_output.split(marker, 1)[1])
+
     def test_request_requires_confirmed_requirements(self):
         payload = request_payload()
         payload["confirmed_requirements"] = []
@@ -1160,6 +1167,118 @@ class UiMockupTest(unittest.TestCase):
         parsed_spec = UiMockupSpec.model_validate(payload)
         with self.assertRaises(UiMockupLLMGenerationError):
             self._generate_with_mock(mobile_rfp_payload(), parsed_spec)
+
+    def test_generation_logs_safe_timeout_diagnostics(self):
+        payload = request_payload()
+        payload["project_title"] = "SECRET_PROJECT_TITLE"
+        payload["project_description"] = "SECRET_PROJECT_DESCRIPTION"
+        payload["confirmed_requirements"][0]["description"] = "SECRET_REQUIREMENT"
+        client = Mock()
+        client.responses.parse.side_effect = APITimeoutError(
+            request=httpx.Request("POST", "https://api.openai.com/v1/responses")
+        )
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "SECRET_API_KEY"}),
+            patch(
+                "app.domains.planning_resources.ui_mockup_service.OpenAI",
+                return_value=client,
+            ),
+            self.assertLogs("uvicorn.error", level="ERROR") as captured,
+            self.assertRaises(UiMockupLLMGenerationError),
+        ):
+            UiMockupLLMService().generate(
+                UiMockupGenerationRequest.model_validate(payload)
+            )
+
+        logged = "\n".join(captured.output)
+        diagnostic = self._diagnostic_payload(captured.output[-1])
+        self.assertEqual(diagnostic["phase"], "openai_request")
+        self.assertEqual(diagnostic["exception_type"], "APITimeoutError")
+        self.assertTrue(diagnostic["timeout"])
+        self.assertEqual(diagnostic["confirmed_requirement_count"], 3)
+        for secret in (
+            "SECRET_API_KEY",
+            "SECRET_PROJECT_TITLE",
+            "SECRET_PROJECT_DESCRIPTION",
+            "SECRET_REQUIREMENT",
+        ):
+            self.assertNotIn(secret, logged)
+
+    def test_generation_logs_sanitized_pydantic_validation_metadata(self):
+        try:
+            UiMockupSpec.model_validate(
+                {
+                    "project_title": "SECRET_RAW_RESPONSE",
+                    "screens": "SECRET_RESPONSE_BODY",
+                }
+            )
+        except ValidationError as validation_error:
+            parse_error = validation_error
+        client = Mock()
+        client.responses.parse.side_effect = parse_error
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "SECRET_API_KEY"}),
+            patch(
+                "app.domains.planning_resources.ui_mockup_service.OpenAI",
+                return_value=client,
+            ),
+            self.assertLogs("uvicorn.error", level="ERROR") as captured,
+            self.assertRaises(UiMockupLLMGenerationError),
+        ):
+            UiMockupLLMService().generate(
+                UiMockupGenerationRequest.model_validate(request_payload())
+            )
+
+        logged = "\n".join(captured.output)
+        diagnostic = self._diagnostic_payload(captured.output[-1])
+        self.assertEqual(diagnostic["phase"], "structured_parse")
+        self.assertEqual(diagnostic["exception_type"], "ValidationError")
+        self.assertGreater(diagnostic["validation_error_count"], 0)
+        self.assertLessEqual(len(diagnostic["validation_errors"]), 10)
+        self.assertEqual(
+            set(diagnostic["validation_errors"][0]),
+            {"loc", "type", "msg"},
+        )
+        for secret in (
+            "SECRET_API_KEY",
+            "SECRET_RAW_RESPONSE",
+            "SECRET_RESPONSE_BODY",
+        ):
+            self.assertNotIn(secret, logged)
+
+    def test_generation_logs_custom_evidence_validation_rule(self):
+        parsed_spec = mobile_booking_spec()
+        parsed_spec.screens[0].evidence_requirement_ids = [999]
+        with (
+            self.assertLogs("uvicorn.error", level="ERROR") as captured,
+            self.assertRaises(UiMockupLLMGenerationError) as raised,
+        ):
+            self._generate_with_mock(mobile_rfp_payload(), parsed_spec)
+
+        diagnostic = self._diagnostic_payload(captured.output[-1])
+        self.assertEqual(diagnostic["phase"], "spec_validation")
+        self.assertEqual(diagnostic["rule_code"], "UI_MOCKUP_UNKNOWN_EVIDENCE")
+        self.assertEqual(diagnostic["affected_count"], 1)
+        self.assertEqual(
+            raised.exception.diagnostic_code,
+            "UI_MOCKUP_UNKNOWN_EVIDENCE",
+        )
+        self.assertNotIn("999", "\n".join(captured.output))
+
+    def test_generation_logs_safe_success_counts(self):
+        spec = mobile_booking_spec()
+        with self.assertLogs("uvicorn.error", level="INFO") as captured:
+            generated, _ = self._generate_with_mock(mobile_rfp_payload(), spec)
+
+        diagnostic = self._diagnostic_payload(captured.output[-1])
+        self.assertIs(generated, spec)
+        self.assertEqual(diagnostic["event"], "ui_mockup_generation_succeeded")
+        self.assertEqual(diagnostic["phase"], "success")
+        self.assertEqual(diagnostic["screen_count"], len(spec.screens))
+        self.assertEqual(diagnostic["journey_count"], len(spec.journeys))
+        self.assertNotIn("project_id", diagnostic)
+        self.assertNotIn("project_title", diagnostic)
+        self.assertNotIn("confirmed_requirements", diagnostic)
 
     def test_generation_context_preserves_backend_requirement_fields(self):
         payload = mobile_rfp_payload()
@@ -1348,18 +1467,30 @@ class UiMockupTest(unittest.TestCase):
     def test_generation_rejects_cross_journey_and_unknown_journey_evidence(self):
         cross_journey = adaptive_mobile_rfp_spec()
         cross_journey.screens[0].evidence_requirement_ids = [15]
-        with self.assertRaises(UiMockupLLMGenerationError):
+        with self.assertRaises(UiMockupLLMGenerationError) as raised:
             self._generate_with_mock(adaptive_mobile_rfp_payload(), cross_journey)
+        self.assertEqual(
+            raised.exception.diagnostic_code,
+            "UI_MOCKUP_SCREEN_EVIDENCE_OUTSIDE_JOURNEY",
+        )
 
         unknown = adaptive_mobile_rfp_spec()
         unknown.journeys[0].evidence_requirement_ids.append(999)
-        with self.assertRaises(UiMockupLLMGenerationError):
+        with self.assertRaises(UiMockupLLMGenerationError) as raised:
             self._generate_with_mock(adaptive_mobile_rfp_payload(), unknown)
+        self.assertEqual(
+            raised.exception.diagnostic_code,
+            "UI_MOCKUP_UNKNOWN_EVIDENCE",
+        )
 
         uncovered = adaptive_mobile_rfp_spec()
         uncovered.journeys[0].evidence_requirement_ids.append(20)
-        with self.assertRaises(UiMockupLLMGenerationError):
+        with self.assertRaises(UiMockupLLMGenerationError) as raised:
             self._generate_with_mock(adaptive_mobile_rfp_payload(), uncovered)
+        self.assertEqual(
+            raised.exception.diagnostic_code,
+            "UI_MOCKUP_JOURNEY_EVIDENCE_NOT_COVERED",
+        )
 
     def test_spec_limits_actor_types_to_three(self):
         payload = adaptive_mobile_rfp_spec().model_dump()

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 
-from openai import OpenAI
+from openai import APITimeoutError, OpenAI
+from pydantic import ValidationError
 
 from .ui_mockup import (
     UiMockupGenerationRequest,
@@ -14,22 +17,45 @@ from .ui_mockup import (
 )
 
 
+logger = logging.getLogger("uvicorn.error")
+
+
 class UiMockupLLMConfigurationError(RuntimeError):
     pass
 
 
 class UiMockupLLMGenerationError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostic_code: str | None = None,
+        affected_count: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.diagnostic_code = diagnostic_code
+        self.affected_count = affected_count
 
 
 class UiMockupLLMService:
     def generate(self, request: UiMockupGenerationRequest) -> UiMockupSpec:
+        started_at = time.monotonic()
+        requirement_count = len(request.confirmed_requirements)
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise UiMockupLLMConfigurationError("OPENAI_API_KEY가 설정되지 않았습니다.")
         context = self._context(request)
         try:
             client = OpenAI(api_key=api_key, timeout=60, max_retries=1)
+        except Exception as exc:
+            self._log_generation_failure(
+                phase="client_init",
+                exc=exc,
+                started_at=started_at,
+                requirement_count=requirement_count,
+            )
+            raise UiMockupLLMGenerationError("UI 목업 화면 설계 생성에 실패했습니다.") from exc
+        try:
             response = client.responses.parse(
                 model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
                 instructions=self._instructions(),
@@ -37,11 +63,135 @@ class UiMockupLLMService:
                 text_format=UiMockupSpec,
                 store=False,
             )
+        except ValidationError as exc:
+            self._log_generation_failure(
+                phase="structured_parse",
+                exc=exc,
+                started_at=started_at,
+                requirement_count=requirement_count,
+            )
+            raise UiMockupLLMGenerationError("UI 목업 화면 설계 생성에 실패했습니다.") from exc
         except Exception as exc:
+            self._log_generation_failure(
+                phase="openai_request",
+                exc=exc,
+                started_at=started_at,
+                requirement_count=requirement_count,
+            )
             raise UiMockupLLMGenerationError("UI 목업 화면 설계 생성에 실패했습니다.") from exc
         if response.output_parsed is None:
-            raise UiMockupLLMGenerationError("구조화된 UI 목업 설계가 반환되지 않았습니다.")
-        return self._validate_generated_spec(request, response.output_parsed)
+            exc = UiMockupLLMGenerationError(
+                "구조화된 UI 목업 설계가 반환되지 않았습니다.",
+                diagnostic_code="UI_MOCKUP_STRUCTURED_OUTPUT_MISSING",
+            )
+            self._log_generation_failure(
+                phase="structured_parse",
+                exc=exc,
+                started_at=started_at,
+                requirement_count=requirement_count,
+            )
+            raise exc
+        try:
+            spec = self._validate_generated_spec(request, response.output_parsed)
+        except UiMockupLLMGenerationError as exc:
+            self._log_generation_failure(
+                phase="spec_validation",
+                exc=exc,
+                started_at=started_at,
+                requirement_count=requirement_count,
+            )
+            raise
+        self._log_generation_success(started_at=started_at, spec=spec)
+        return spec
+
+    @staticmethod
+    def _elapsed_ms(started_at: float) -> int:
+        return max(0, round((time.monotonic() - started_at) * 1000))
+
+    @classmethod
+    def _log_generation_failure(
+        cls,
+        *,
+        phase: str,
+        exc: Exception,
+        started_at: float,
+        requirement_count: int,
+    ) -> None:
+        cause = exc.__cause__ or exc.__context__
+        timeout = cls._is_timeout(exc) or (cause is not None and cls._is_timeout(cause))
+        validation_errors = cls._safe_validation_errors(exc)
+        payload: dict[str, object] = {
+            "event": "ui_mockup_generation_failed",
+            "phase": phase,
+            "exception_type": type(exc).__name__,
+            "cause_type": type(cause).__name__ if cause is not None else None,
+            "timeout": timeout,
+            "validation_error_count": len(exc.errors())
+            if isinstance(exc, ValidationError)
+            else 0,
+            "elapsed_ms": cls._elapsed_ms(started_at),
+            "confirmed_requirement_count": requirement_count,
+        }
+        status_code = getattr(exc, "status_code", None)
+        if isinstance(status_code, int):
+            payload["status_code"] = status_code
+        if validation_errors:
+            payload["validation_errors"] = validation_errors
+        if isinstance(exc, UiMockupLLMGenerationError):
+            if exc.diagnostic_code:
+                payload["rule_code"] = exc.diagnostic_code
+            if exc.affected_count is not None:
+                payload["affected_count"] = exc.affected_count
+        logger.error(
+            "ui_mockup_generation_diagnostic %s",
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        )
+
+    @classmethod
+    def _log_generation_success(
+        cls,
+        *,
+        started_at: float,
+        spec: UiMockupSpec,
+    ) -> None:
+        payload = {
+            "event": "ui_mockup_generation_succeeded",
+            "phase": "success",
+            "elapsed_ms": cls._elapsed_ms(started_at),
+            "screen_count": len(spec.screens),
+            "journey_count": len(spec.journeys),
+        }
+        logger.info(
+            "ui_mockup_generation_diagnostic %s",
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        )
+
+    @staticmethod
+    def _is_timeout(exc: BaseException) -> bool:
+        return isinstance(exc, (APITimeoutError, TimeoutError)) or type(exc).__name__ in {
+            "ConnectTimeout",
+            "ReadTimeout",
+            "WriteTimeout",
+            "PoolTimeout",
+        }
+
+    @staticmethod
+    def _safe_validation_errors(exc: Exception) -> list[dict[str, object]]:
+        if not isinstance(exc, ValidationError):
+            return []
+        safe_errors = []
+        for error in exc.errors()[:10]:
+            safe_errors.append(
+                {
+                    "loc": [
+                        item if isinstance(item, int) else str(item)[:80]
+                        for item in error.get("loc", ())
+                    ],
+                    "type": str(error.get("type", ""))[:120],
+                    "msg": str(error.get("msg", ""))[:240],
+                }
+            )
+        return safe_errors
 
     def assess(
         self,
@@ -117,20 +267,26 @@ class UiMockupLLMService:
             for journey in spec.journeys
             for requirement_id in journey.evidence_requirement_ids
         }
-        if (evidence_ids | journey_evidence_ids) - allowed_ids:
+        unknown_ids = (evidence_ids | journey_evidence_ids) - allowed_ids
+        if unknown_ids:
             raise UiMockupLLMGenerationError(
-                "UI 목업 화면에 입력되지 않은 요구사항 ID가 포함되었습니다."
+                "UI 목업 화면에 입력되지 않은 요구사항 ID가 포함되었습니다.",
+                diagnostic_code="UI_MOCKUP_UNKNOWN_EVIDENCE",
+                affected_count=len(unknown_ids),
             )
         journeys_by_id = {
             journey.journey_id: journey for journey in spec.journeys
         }
         for screen in spec.screens:
             journey = journeys_by_id[screen.journey_id]
-            if not set(screen.evidence_requirement_ids) <= set(
+            outside_journey_ids = set(screen.evidence_requirement_ids) - set(
                 journey.evidence_requirement_ids
-            ):
+            )
+            if outside_journey_ids:
                 raise UiMockupLLMGenerationError(
-                    "UI 목업 화면 근거가 연결된 여정의 요구사항 범위를 벗어났습니다."
+                    "UI 목업 화면 근거가 연결된 여정의 요구사항 범위를 벗어났습니다.",
+                    diagnostic_code="UI_MOCKUP_SCREEN_EVIDENCE_OUTSIDE_JOURNEY",
+                    affected_count=len(outside_journey_ids),
                 )
         for journey in spec.journeys:
             covered_ids = {
@@ -139,9 +295,12 @@ class UiMockupLLMService:
                 if screen.journey_id == journey.journey_id
                 for requirement_id in screen.evidence_requirement_ids
             }
-            if set(journey.evidence_requirement_ids) - covered_ids:
+            uncovered_ids = set(journey.evidence_requirement_ids) - covered_ids
+            if uncovered_ids:
                 raise UiMockupLLMGenerationError(
-                    "UI 목업 여정의 요구사항이 화면 근거에 모두 연결되지 않았습니다."
+                    "UI 목업 여정의 요구사항이 화면 근거에 모두 연결되지 않았습니다.",
+                    diagnostic_code="UI_MOCKUP_JOURNEY_EVIDENCE_NOT_COVERED",
+                    affected_count=len(uncovered_ids),
                 )
         return spec
 
