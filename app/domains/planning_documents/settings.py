@@ -18,7 +18,7 @@ PLANNING_ANALYSIS_RETRY_COUNT_ENV = "PLANNING_ANALYSIS_RETRY_COUNT"
 
 @dataclass(frozen=True)
 class PlanningAnalysisSettings:
-    planning_analysis_timeout_seconds: int = 50
+    planning_analysis_timeout_seconds: int = 300
     planning_max_analysis_chunks: int = 2
     planning_readjust_max_analysis_chunks: int = 4
     planning_analysis_retry_count: int = 0
