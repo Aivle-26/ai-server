@@ -112,24 +112,53 @@ class UiMockupLLMService:
             for screen in spec.screens
             for requirement_id in screen.evidence_requirement_ids
         }
-        if evidence_ids - allowed_ids:
+        journey_evidence_ids = {
+            requirement_id
+            for journey in spec.journeys
+            for requirement_id in journey.evidence_requirement_ids
+        }
+        if (evidence_ids | journey_evidence_ids) - allowed_ids:
             raise UiMockupLLMGenerationError(
                 "UI 목업 화면에 입력되지 않은 요구사항 ID가 포함되었습니다."
             )
+        journeys_by_id = {
+            journey.journey_id: journey for journey in spec.journeys
+        }
+        for screen in spec.screens:
+            journey = journeys_by_id[screen.journey_id]
+            if not set(screen.evidence_requirement_ids) <= set(
+                journey.evidence_requirement_ids
+            ):
+                raise UiMockupLLMGenerationError(
+                    "UI 목업 화면 근거가 연결된 여정의 요구사항 범위를 벗어났습니다."
+                )
+        for journey in spec.journeys:
+            covered_ids = {
+                requirement_id
+                for screen in spec.screens
+                if screen.journey_id == journey.journey_id
+                for requirement_id in screen.evidence_requirement_ids
+            }
+            if set(journey.evidence_requirement_ids) - covered_ids:
+                raise UiMockupLLMGenerationError(
+                    "UI 목업 여정의 요구사항이 화면 근거에 모두 연결되지 않았습니다."
+                )
         return spec
 
     @staticmethod
     def _screen_selection_principles() -> str:
         return (
             "confirmed_requirements를 유일한 기능 source of truth로 사용하고 프로젝트명만으로 "
-            "기능을 추측하지 마세요. 화면을 바로 고르지 말고 먼저 요구사항에서 actor를 분리한 뒤 "
-            "가장 중요한 primary actor, 그 actor의 핵심 목표, 목표를 완료하는 하나의 end-to-end "
-            "journey를 순서대로 선택하세요. priority가 HIGH, MUST 또는 필수인 요구사항, 명시적인 "
-            "화면 interaction, 검색-예약-결제나 탐색-구매 같은 핵심 거래 흐름, 여러 요구사항이 "
-            "연결되는 단계를 우선하세요. 대표 화면은 한 primary actor의 journey 순서를 따라야 하며 "
-            "CUSTOMER, PARTNER, ADMIN 화면을 이유 없이 섞지 마세요. 화면이 3개를 넘는 journey는 "
-            "서비스 상세+예약 옵션, 결제+최종 확인처럼 인접 단계를 한 화면에 합쳐 핵심 HIGH/MUST "
-            "요구사항을 최대한 커버하세요."
+            "기능을 추측하지 마세요. Requirement → Actor → Goal → Journey → Screen 순서로 분석하세요. "
+            "먼저 요구사항에서 actor와 목표를 분리하고 가장 중요한 primary actor의 end-to-end journey를 "
+            "완성하세요. PARTNER나 ADMIN처럼 다른 actor의 명시적인 HIGH/MUST 요구사항이 충분할 때만 "
+            "별도 journey를 추가하고 핵심 actor는 최대 3종으로 제한하세요. actor가 다른 화면을 같은 "
+            "journey에 섞지 마세요. priority가 HIGH, MUST 또는 필수인 요구사항, 명시적인 화면 interaction, "
+            "검색-예약-결제나 탐색-구매 같은 거래 흐름, 여러 요구사항이 연결되는 단계를 우선하세요. "
+            "화면 개수를 목표로 삼지 말고 독립된 사용자 목표나 상태, 필수 거래 단계, 새 요구사항 coverage가 "
+            "있을 때만 화면을 추가하세요. 같은 목표와 상태를 표현하는 인접 단계는 한 화면으로 합치고 "
+            "중복 화면은 만들지 마세요. 핵심 흐름과 명시된 UI 요구사항 coverage가 충족되면 즉시 멈추되 "
+            "복잡한 프로젝트에서도 전체 화면은 12개를 넘기지 마세요."
         )
 
     @classmethod
@@ -138,14 +167,19 @@ class UiMockupLLMService:
             "당신은 확정 요구사항을 분석해 프로젝트 도메인과 사용자 흐름에 맞는 제품 UI를 "
             "설계하는 UX architect입니다. "
             + cls._screen_selection_principles()
-            + " UiMockupSpec의 primary_actor와 journey_summary를 먼저 확정하고 screens는 journey_step "
-            "1부터 끊김 없이 배열하세요. 각 screen.actor는 primary_actor와 같아야 하고, "
-            "evidence_requirement_ids에는 그 화면의 근거가 된 입력 requirement ID를 1~6개 넣으세요. "
-            "입력에 없는 ID는 절대 만들지 마세요. 화면명은 지역 서비스 검색 결과, 서비스 상세 및 "
+            + " UiMockupSpec의 primary_actor, platform, journey_summary는 첫 번째 핵심 journey를 요약해야 "
+            "합니다. journeys에는 primary journey를 먼저 넣고 각 journey_id, actor, goal, summary, platform, "
+            "evidence_requirement_ids를 채우세요. screens는 journeys 순서대로 묶고 각 화면의 journey_id와 "
+            "actor, platform을 연결하며 journey_step은 각 journey 안에서 1부터 끊김 없이 배열하세요. "
+            "각 screen.evidence_requirement_ids에는 그 화면의 근거가 된 입력 requirement ID를 1~6개 넣고 "
+            "연결된 journey의 evidence_requirement_ids에도 포함하세요. 입력에 없는 ID는 절대 만들지 마세요. "
+            "단순 기능은 1~3개 화면이면 충분하며, 복잡한 흐름은 coverage가 늘어나는 만큼만 확장하되 최대 "
+            "12개 화면으로 제한하세요. 화면명은 지역 서비스 검색 결과, 서비스 상세 및 "
             "예약, 결제 및 예약 확정처럼 도메인과 목표가 드러나야 하며 메인 화면, 목록 화면, 상세 "
-            "화면 같은 generic 이름을 사용하지 마세요. 대표 화면 1~3개와 platform, page_type, "
-            "navigation_type, layout_type을 선택하세요. 모바일 사용자나 모바일 앱이 명시되면 "
-            "MOBILE을 선택하고 SIDEBAR를 사용하지 마세요. 예약 서비스는 검색-일정 선택-예약 확인, "
+            "화면 같은 generic 이름이나 서로 의미가 겹치는 화면명을 사용하지 마세요. 화면별 page_type, "
+            "navigation_type, layout_type을 선택하세요. 모바일 사용자나 모바일 앱이 명시되면 해당 journey와 "
+            "screen의 platform을 MOBILE로 선택하고 SIDEBAR를 사용하지 마세요. 예약 서비스는 검색-일정 "
+            "선택-예약 확인, "
             "쇼핑몰은 상품 목록-상세-장바구니/주문, 커뮤니티는 피드-상세-작성처럼 요구사항의 "
             "실제 사용자 흐름을 우선하세요. 프로젝트 관리 제품일 때만 dashboard/sidebar를 사용하세요. "
             "REST API, batch, ETL처럼 화면이 필요하지 않은 프로젝트에서 생성이 강제되더라도 "

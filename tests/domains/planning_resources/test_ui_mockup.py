@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import unittest
+from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -470,6 +471,469 @@ def community_spec() -> UiMockupSpec:
     )
 
 
+def adaptive_screen(
+    screen_name: str,
+    purpose: str,
+    journey_id: str,
+    actor: str,
+    platform: str,
+    journey_step: int,
+    evidence_requirement_ids: list[int],
+    page_type: str,
+    sections: list[tuple[str, str, list[str]]],
+    *,
+    navigation_type: str = "NONE",
+    layout_type: str = "FULL_WIDTH",
+    navigation: list[str] | None = None,
+    primary_actions: list[str] | None = None,
+) -> dict:
+    return {
+        "screen_name": screen_name,
+        "purpose": purpose,
+        "journey_id": journey_id,
+        "actor": actor,
+        "platform": platform,
+        "journey_step": journey_step,
+        "evidence_requirement_ids": evidence_requirement_ids,
+        "page_type": page_type,
+        "navigation_type": navigation_type,
+        "layout_type": layout_type,
+        "navigation": navigation or [],
+        "sections": [
+            {
+                "title": title,
+                "component_type": component_type,
+                "items": items,
+            }
+            for title, component_type, items in sections
+        ],
+        "primary_actions": primary_actions or [],
+    }
+
+
+def simple_login_spec() -> UiMockupSpec:
+    return UiMockupSpec.model_validate(
+        {
+            "project_title": "간편 회원 서비스",
+            "design_summary": "이메일 로그인 후 개인 서비스를 시작하는 간결한 웹 흐름",
+            "primary_actor": "CUSTOMER",
+            "journey_summary": "이메일 로그인 → 개인 서비스 시작",
+            "platform": "WEB",
+            "journeys": [
+                {
+                    "journey_id": "CUSTOMER_ACCESS",
+                    "actor": "CUSTOMER",
+                    "goal": "계정으로 안전하게 서비스에 진입",
+                    "summary": "이메일로 로그인하고 개인 시작 화면을 확인합니다.",
+                    "platform": "WEB",
+                    "evidence_requirement_ids": [1, 2],
+                }
+            ],
+            "screens": [
+                adaptive_screen(
+                    "이메일 로그인",
+                    "이메일과 비밀번호로 계정을 인증합니다.",
+                    "CUSTOMER_ACCESS",
+                    "CUSTOMER",
+                    "WEB",
+                    1,
+                    [1],
+                    "FORM",
+                    [("계정 인증", "form", ["이메일", "비밀번호"])],
+                    layout_type="FORM_FLOW",
+                    primary_actions=["로그인"],
+                ),
+                adaptive_screen(
+                    "개인 서비스 시작",
+                    "로그인한 사용자가 자신의 서비스를 시작합니다.",
+                    "CUSTOMER_ACCESS",
+                    "CUSTOMER",
+                    "WEB",
+                    2,
+                    [2],
+                    "LANDING",
+                    [("내 서비스", "card", ["최근 이용", "서비스 시작"])],
+                    primary_actions=["서비스 시작"],
+                ),
+            ],
+        }
+    )
+
+
+def adaptive_ecommerce_spec() -> UiMockupSpec:
+    journey_id = "CUSTOMER_PURCHASE"
+    common_navigation = ["상품", "카테고리", "장바구니", "주문"]
+    return UiMockupSpec.model_validate(
+        {
+            "project_title": "로컬 브랜드 온라인 쇼핑몰",
+            "design_summary": "상품 탐색부터 주문 완료까지 요구사항을 빠짐없이 잇는 웹 구매 흐름",
+            "primary_actor": "CUSTOMER",
+            "journey_summary": "탐색 → 상세 → 장바구니 → 배송 및 쿠폰 → 결제 완료",
+            "platform": "WEB",
+            "journeys": [
+                {
+                    "journey_id": journey_id,
+                    "actor": "CUSTOMER",
+                    "goal": "원하는 상품을 찾아 결제 완료",
+                    "summary": "검색과 비교, 상세 확인, 장바구니, 배송 정보, 결제를 순서대로 진행합니다.",
+                    "platform": "WEB",
+                    "evidence_requirement_ids": [1, 2, 3, 4, 5],
+                }
+            ],
+            "screens": [
+                adaptive_screen(
+                    "상품 검색 및 카테고리 탐색",
+                    "키워드와 카테고리로 상품을 탐색합니다.",
+                    journey_id,
+                    "CUSTOMER",
+                    "WEB",
+                    1,
+                    [1],
+                    "ECOMMERCE",
+                    [
+                        ("상품 검색", "search_bar", ["상품명 검색"]),
+                        ("카테고리", "category_grid", ["의류", "생활", "식품"]),
+                        ("검색 조건", "filter_chips", ["가격", "평점", "배송"]),
+                    ],
+                    navigation_type="TOP_NAV",
+                    layout_type="GRID",
+                    navigation=common_navigation,
+                    primary_actions=["상품 보기"],
+                ),
+                adaptive_screen(
+                    "상품 상세 및 옵션 선택",
+                    "상품 정보와 리뷰를 확인하고 옵션을 선택합니다.",
+                    journey_id,
+                    "CUSTOMER",
+                    "WEB",
+                    2,
+                    [2],
+                    "DETAIL",
+                    [
+                        ("상품 정보", "service_card", ["상품 이미지", "가격", "배송 조건"]),
+                        ("상품 옵션", "option_selector", ["색상", "사이즈"]),
+                        ("구매 후기", "review_summary", ["평점", "후기 요약"]),
+                    ],
+                    navigation_type="TOP_NAV",
+                    layout_type="TWO_COLUMN",
+                    navigation=common_navigation,
+                    primary_actions=["장바구니 담기"],
+                ),
+                adaptive_screen(
+                    "장바구니 상품 검토",
+                    "선택 상품과 수량 및 금액을 검토합니다.",
+                    journey_id,
+                    "CUSTOMER",
+                    "WEB",
+                    3,
+                    [3],
+                    "ECOMMERCE",
+                    [
+                        ("선택 상품", "table", ["상품", "옵션", "수량"]),
+                        ("주문 예정 금액", "price_summary", ["상품 금액", "배송비"]),
+                    ],
+                    navigation_type="TOP_NAV",
+                    layout_type="TWO_COLUMN",
+                    navigation=common_navigation,
+                    primary_actions=["주문하기"],
+                ),
+                adaptive_screen(
+                    "배송 정보 및 쿠폰 적용",
+                    "배송지와 쿠폰을 입력해 최종 결제 금액을 확인합니다.",
+                    journey_id,
+                    "CUSTOMER",
+                    "WEB",
+                    4,
+                    [4],
+                    "FORM",
+                    [
+                        ("배송 정보", "form", ["받는 사람", "주소", "연락처"]),
+                        ("쿠폰 및 금액", "price_summary", ["쿠폰 할인", "최종 금액"]),
+                    ],
+                    navigation_type="TABS",
+                    layout_type="FORM_FLOW",
+                    navigation=["장바구니", "배송", "결제"],
+                    primary_actions=["결제로 이동"],
+                ),
+                adaptive_screen(
+                    "결제 및 주문 완료",
+                    "결제 수단을 선택하고 주문 결과를 확인합니다.",
+                    journey_id,
+                    "CUSTOMER",
+                    "WEB",
+                    5,
+                    [5],
+                    "FORM",
+                    [
+                        ("결제 수단", "payment_methods", ["카드", "간편 결제"]),
+                        ("주문 요약", "price_summary", ["결제 금액", "배송지"]),
+                        ("주문 완료", "card", ["주문 번호", "배송 예정 안내"]),
+                    ],
+                    navigation_type="TABS",
+                    layout_type="FORM_FLOW",
+                    navigation=["장바구니", "배송", "결제"],
+                    primary_actions=["결제하기"],
+                ),
+            ],
+        }
+    )
+
+
+def adaptive_mobile_rfp_spec() -> UiMockupSpec:
+    customer_nav = ["홈", "검색", "예약", "마이"]
+    customer_screens = [
+        adaptive_screen(
+            "고객 로그인 및 온보딩",
+            "계정을 인증하고 위치 사용 안내를 확인합니다.",
+            "CUSTOMER_BOOKING",
+            "CUSTOMER",
+            "MOBILE",
+            1,
+            [1, 21],
+            "FORM",
+            [("계정 인증", "form", ["이메일", "비밀번호", "위치 사용 동의"])],
+            layout_type="FORM_FLOW",
+            primary_actions=["로그인"],
+        ),
+        adaptive_screen(
+            "위치 기반 홈 및 통합 검색",
+            "위치, 키워드, 카테고리와 조건으로 예약 가능한 서비스를 찾습니다.",
+            "CUSTOMER_BOOKING",
+            "CUSTOMER",
+            "MOBILE",
+            2,
+            [2, 3, 4, 5, 21],
+            "BOOKING",
+            [
+                ("위치 및 키워드", "search_bar", ["현재 위치에서 검색"]),
+                ("서비스 카테고리", "category_grid", ["청소", "수리", "레슨"]),
+                ("검색 조건", "filter_chips", ["가격", "거리", "평점", "예약 가능"]),
+                ("예약 가능 서비스", "service_card", ["가까운 서비스", "추천 서비스"]),
+            ],
+            navigation_type="BOTTOM_NAV",
+            layout_type="FEED",
+            navigation=customer_nav,
+            primary_actions=["서비스 보기"],
+        ),
+        adaptive_screen(
+            "서비스 상세 및 지도 확인",
+            "서비스 정보와 리뷰 및 위치를 확인합니다.",
+            "CUSTOMER_BOOKING",
+            "CUSTOMER",
+            "MOBILE",
+            3,
+            [6, 7, 21],
+            "DETAIL",
+            [
+                ("서비스 정보", "service_card", ["설명", "가격", "운영 시간"]),
+                ("서비스 위치", "map_preview", ["지도 위치"]),
+                ("이용 후기", "review_summary", ["평점", "후기 요약"]),
+            ],
+            navigation_type="BOTTOM_NAV",
+            layout_type="FEED",
+            navigation=customer_nav,
+            primary_actions=["예약 일정 선택"],
+        ),
+        adaptive_screen(
+            "예약 날짜·시간 및 옵션 선택",
+            "예약 가능한 일정과 서비스 옵션을 선택합니다.",
+            "CUSTOMER_BOOKING",
+            "CUSTOMER",
+            "MOBILE",
+            4,
+            [8, 9, 21],
+            "BOOKING",
+            [
+                ("예약 날짜", "date_picker", ["예약 가능 날짜"]),
+                ("예약 시간", "time_slots", ["09:00", "11:00", "14:00"]),
+                ("서비스 옵션", "option_selector", ["기본 옵션", "추가 옵션"]),
+            ],
+            navigation_type="BOTTOM_NAV",
+            layout_type="FORM_FLOW",
+            navigation=customer_nav,
+            primary_actions=["결제로 이동"],
+        ),
+        adaptive_screen(
+            "쿠폰 적용 및 PG 결제",
+            "쿠폰과 결제 수단을 선택해 예약 금액을 결제합니다.",
+            "CUSTOMER_BOOKING",
+            "CUSTOMER",
+            "MOBILE",
+            5,
+            [10, 11, 21],
+            "FORM",
+            [
+                ("쿠폰 및 최종 금액", "price_summary", ["쿠폰 할인", "결제 금액"]),
+                ("PG 결제 수단", "payment_methods", ["카드", "간편 결제"]),
+            ],
+            layout_type="FORM_FLOW",
+            primary_actions=["결제하기"],
+        ),
+        adaptive_screen(
+            "예약 완료 및 확정 상세",
+            "예약 번호와 확정된 일정 및 옵션을 확인합니다.",
+            "CUSTOMER_BOOKING",
+            "CUSTOMER",
+            "MOBILE",
+            6,
+            [12, 21],
+            "DETAIL",
+            [("예약 확정", "card", ["예약 번호", "날짜와 시간", "선택 옵션"])],
+            navigation_type="BOTTOM_NAV",
+            layout_type="FULL_WIDTH",
+            navigation=customer_nav,
+            primary_actions=["예약 상세 보기"],
+        ),
+        adaptive_screen(
+            "예약 내역 및 마이페이지",
+            "예약 이력과 리뷰 및 파트너 문의를 관리합니다.",
+            "CUSTOMER_BOOKING",
+            "CUSTOMER",
+            "MOBILE",
+            7,
+            [13, 14, 21],
+            "LIST",
+            [
+                ("예약 내역", "list", ["예정 예약", "완료 예약"]),
+                ("리뷰 및 문의", "review_summary", ["리뷰 작성", "파트너 문의"]),
+            ],
+            navigation_type="BOTTOM_NAV",
+            layout_type="FEED",
+            navigation=customer_nav,
+            primary_actions=["예약 관리"],
+        ),
+    ]
+    partner_screens = [
+        adaptive_screen(
+            "파트너 예약 현황 및 승인",
+            "신규 예약을 확인하고 승인 또는 거절합니다.",
+            "PARTNER_OPERATIONS",
+            "PARTNER",
+            "WEB",
+            1,
+            [15, 16, 21],
+            "LIST",
+            [("예약 요청", "table", ["고객", "예약 일정", "상태"])],
+            navigation_type="SIDEBAR",
+            layout_type="MASTER_DETAIL",
+            navigation=["예약", "서비스", "일정"],
+            primary_actions=["예약 승인", "예약 거절"],
+        ),
+        adaptive_screen(
+            "파트너 서비스 및 일정 관리",
+            "제공 서비스와 예약 가능 일정을 관리합니다.",
+            "PARTNER_OPERATIONS",
+            "PARTNER",
+            "WEB",
+            2,
+            [17],
+            "FORM",
+            [("서비스 정보", "form", ["서비스명", "가격", "가능 일정"])],
+            navigation_type="SIDEBAR",
+            layout_type="FORM_FLOW",
+            navigation=["예약", "서비스", "일정"],
+            primary_actions=["서비스 저장"],
+        ),
+    ]
+    admin_screens = [
+        adaptive_screen(
+            "관리자 운영 현황 및 거래 검색",
+            "회원, 파트너와 거래 현황을 조회합니다.",
+            "ADMIN_CONTROL",
+            "ADMIN",
+            "WEB",
+            1,
+            [18, 19, 21],
+            "DASHBOARD",
+            [
+                ("운영 현황", "chart", ["예약 상태", "거래 흐름"]),
+                ("회원 및 거래", "table", ["회원", "파트너", "거래 상태"]),
+            ],
+            navigation_type="SIDEBAR",
+            layout_type="GRID",
+            navigation=["운영 현황", "회원", "파트너", "거래"],
+            primary_actions=["거래 조회"],
+        ),
+        adaptive_screen(
+            "관리자 CS 및 신고 처리",
+            "고객 문의와 신고 내역을 검토하고 처리합니다.",
+            "ADMIN_CONTROL",
+            "ADMIN",
+            "WEB",
+            2,
+            [20],
+            "LIST",
+            [("CS 및 신고", "table", ["접수 유형", "처리 상태", "담당자"])],
+            navigation_type="SIDEBAR",
+            layout_type="MASTER_DETAIL",
+            navigation=["CS", "신고", "처리 이력"],
+            primary_actions=["처리 상태 변경"],
+        ),
+    ]
+    return UiMockupSpec.model_validate(
+        {
+            "project_title": "지역 생활 서비스 예약 플랫폼",
+            "design_summary": "고객 예약 전 과정과 파트너 및 관리자 운영 흐름을 actor별로 구분한 서비스",
+            "primary_actor": "CUSTOMER",
+            "journey_summary": "로그인 → 탐색 → 상세 → 예약 → 결제 → 완료 → 마이페이지",
+            "platform": "MOBILE",
+            "journeys": [
+                {
+                    "journey_id": "CUSTOMER_BOOKING",
+                    "actor": "CUSTOMER",
+                    "goal": "서비스를 찾아 예약하고 결제 완료",
+                    "summary": "로그인부터 검색, 상세, 일정 선택, 결제, 예약 관리까지 진행합니다.",
+                    "platform": "MOBILE",
+                    "evidence_requirement_ids": list(range(1, 15)) + [21],
+                },
+                {
+                    "journey_id": "PARTNER_OPERATIONS",
+                    "actor": "PARTNER",
+                    "goal": "예약과 제공 서비스 운영",
+                    "summary": "예약 요청을 처리하고 서비스와 가능 일정을 관리합니다.",
+                    "platform": "WEB",
+                    "evidence_requirement_ids": [15, 16, 17, 21],
+                },
+                {
+                    "journey_id": "ADMIN_CONTROL",
+                    "actor": "ADMIN",
+                    "goal": "플랫폼 운영 및 CS 통제",
+                    "summary": "회원과 거래를 조회하고 CS 및 신고를 처리합니다.",
+                    "platform": "WEB",
+                    "evidence_requirement_ids": [18, 19, 20, 21],
+                },
+            ],
+            "screens": customer_screens + partner_screens + admin_screens,
+        }
+    )
+
+
+def multi_actor_service_spec() -> UiMockupSpec:
+    payload = adaptive_mobile_rfp_spec().model_dump()
+    payload["project_title"] = "고객·파트너·관리자 방문 서비스"
+    payload["design_summary"] = "세 actor의 핵심 업무를 분리한 모바일 및 웹 서비스"
+    payload["journeys"][0]["evidence_requirement_ids"] = list(range(1, 13))
+    payload["screens"] = (
+        payload["screens"][1:4]
+        + payload["screens"][7:9]
+        + payload["screens"][9:10]
+    )
+    for journey in payload["journeys"]:
+        journey_screens = [
+            screen
+            for screen in payload["screens"]
+            if screen["journey_id"] == journey["journey_id"]
+        ]
+        journey["evidence_requirement_ids"] = list(dict.fromkeys(
+            requirement_id
+            for screen in journey_screens
+            for requirement_id in screen["evidence_requirement_ids"]
+        ))
+        for step, screen in enumerate(journey_screens, start=1):
+            screen["journey_step"] = step
+    return UiMockupSpec.model_validate(payload)
+
+
 def generation_payload(
     project_title: str,
     project_description: str,
@@ -515,6 +979,54 @@ def mobile_rfp_payload() -> dict:
         "project_id": 72,
         "project_title": "지역 생활 서비스 예약 앱",
         "project_description": "일반 고객용 모바일 앱과 별도 파트너 및 관리자 포털을 제공합니다.",
+        "confirmed_requirements": [
+            {
+                "requirement_id": index,
+                "title": title,
+                "description": description,
+                "category": "FUNCTIONAL",
+                "priority": priority,
+            }
+            for index, (title, description, priority) in enumerate(
+                requirements,
+                start=1,
+            )
+        ],
+    }
+
+
+def adaptive_mobile_rfp_payload() -> dict:
+    requirements = [
+        ("고객 로그인 및 온보딩", "고객은 로그인하고 위치 사용 안내를 확인합니다.", "HIGH"),
+        ("위치 기반 홈", "고객은 현재 위치를 기준으로 서비스를 탐색합니다.", "HIGH"),
+        ("통합 검색", "고객은 키워드로 서비스를 검색합니다.", "HIGH"),
+        ("카테고리 검색", "고객은 카테고리를 선택해 서비스를 탐색합니다.", "HIGH"),
+        ("복합 필터", "가격, 거리, 평점, 예약 가능 여부를 함께 필터링합니다.", "HIGH"),
+        ("서비스 상세", "이미지, 설명, 가격, 평점과 운영 시간을 확인합니다.", "HIGH"),
+        ("지도", "서비스 위치와 주변 정보를 지도에서 확인합니다.", "HIGH"),
+        ("예약 일정", "예약 가능한 날짜와 시간 슬롯을 선택합니다.", "HIGH"),
+        ("서비스 옵션", "예약할 서비스 옵션을 선택합니다.", "HIGH"),
+        ("쿠폰", "결제 전에 사용 가능한 쿠폰을 적용합니다.", "HIGH"),
+        ("PG 결제", "카드 또는 간편 결제로 예약 금액을 결제합니다.", "HIGH"),
+        ("예약 완료", "예약 번호와 확정 일정을 확인합니다.", "HIGH"),
+        ("예약 내역", "고객은 예약 내역과 상태를 확인합니다.", "HIGH"),
+        ("리뷰 및 문의", "고객은 리뷰를 작성하고 파트너에게 문의합니다.", "MEDIUM"),
+        ("파트너 예약 현황", "파트너는 신규 예약과 상태를 조회합니다.", "HIGH"),
+        ("파트너 예약 승인", "파트너는 예약을 승인하거나 거절합니다.", "HIGH"),
+        ("파트너 서비스 관리", "파트너는 서비스와 가능 일정을 관리합니다.", "HIGH"),
+        ("관리자 운영 현황", "관리자는 플랫폼 운영 현황을 확인합니다.", "HIGH"),
+        ("관리자 회원 및 거래", "관리자는 회원, 파트너와 거래를 조회합니다.", "HIGH"),
+        ("관리자 CS 및 신고", "관리자는 고객 문의와 신고를 처리합니다.", "HIGH"),
+        (
+            "필수 UI 목업 화면",
+            "로그인, 홈과 검색, 서비스 상세, 예약 확인, 결제, 마이페이지, 파트너 예약 관리, 운영자 통합 대시보드를 필수로 표현합니다.",
+            "HIGH",
+        ),
+    ]
+    return {
+        "project_id": 73,
+        "project_title": "지역 생활 서비스 예약 플랫폼",
+        "project_description": "고객 모바일 앱과 파트너 및 관리자 웹 포털을 제공합니다.",
         "confirmed_requirements": [
             {
                 "requirement_id": index,
@@ -586,9 +1098,18 @@ class UiMockupTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             UiMockupGenerationRequest.model_validate(payload)
 
-    def test_spec_rejects_more_than_three_screens(self):
-        payload = mockup_spec().model_dump()
-        payload["screens"] = payload["screens"] * 2
+    def test_spec_accepts_twelve_and_rejects_more_than_twelve_screens(self):
+        payload = adaptive_mobile_rfp_spec().model_dump()
+        twelfth = deepcopy(payload["screens"][-1])
+        twelfth["screen_name"] = "관리자 신고 처리 이력"
+        twelfth["journey_step"] = 3
+        payload["screens"].append(twelfth)
+        self.assertEqual(len(UiMockupSpec.model_validate(payload).screens), 12)
+
+        thirteenth = deepcopy(twelfth)
+        thirteenth["screen_name"] = "관리자 신고 통계 확인"
+        thirteenth["journey_step"] = 4
+        payload["screens"].append(thirteenth)
         with self.assertRaises(ValidationError):
             UiMockupSpec.model_validate(payload)
 
@@ -686,6 +1207,228 @@ class UiMockupTest(unittest.TestCase):
         self.assertTrue({"search_bar", "filter_chips"} <= components[0])
         self.assertTrue({"date_picker", "time_slots"} <= components[1])
         self.assertTrue({"price_summary", "payment_methods"} <= components[2])
+
+    def test_screen_count_adapts_to_project_complexity(self):
+        fixtures = {
+            "simple_login": (simple_login_spec(), range(1, 4)),
+            "ecommerce": (adaptive_ecommerce_spec(), range(3, 7)),
+            "mobile_rfp": (adaptive_mobile_rfp_spec(), range(4, 13)),
+            "pm_saas": (mockup_spec(), range(1, 4)),
+            "multi_actor": (multi_actor_service_spec(), range(4, 13)),
+        }
+
+        for name, (spec, expected_range) in fixtures.items():
+            with self.subTest(project=name):
+                self.assertIn(len(spec.screens), expected_range)
+                self.assertLessEqual(len(spec.screens), 12)
+
+        self.assertEqual(len(simple_login_spec().screens), 2)
+        self.assertEqual(len(adaptive_ecommerce_spec().screens), 5)
+        self.assertEqual(len(adaptive_mobile_rfp_spec().screens), 11)
+        self.assertEqual(len(mockup_spec().screens), 3)
+        self.assertEqual(len(multi_actor_service_spec().screens), 6)
+
+    def test_adaptive_mobile_rfp_covers_complete_customer_flow(self):
+        spec = adaptive_mobile_rfp_spec()
+        customer_screens = [
+            screen for screen in spec.screens if screen.actor == "CUSTOMER"
+        ]
+        core_must_ids = set(range(1, 14))
+        covered_ids = {
+            requirement_id
+            for screen in customer_screens
+            for requirement_id in screen.evidence_requirement_ids
+        }
+        coverage = len(core_must_ids & covered_ids) / len(core_must_ids)
+        names = " ".join(screen.screen_name for screen in customer_screens)
+        components = {
+            section.component_type
+            for screen in customer_screens
+            for section in screen.sections
+        }
+
+        self.assertEqual(coverage, 1.0)
+        self.assertGreater(len(customer_screens), 3)
+        for keyword in ("로그인", "검색", "상세", "예약", "결제", "완료", "마이페이지"):
+            self.assertIn(keyword, names)
+        self.assertTrue(
+            {
+                "search_bar",
+                "filter_chips",
+                "map_preview",
+                "date_picker",
+                "time_slots",
+                "payment_methods",
+            }
+            <= components
+        )
+
+        explicit_screen_terms = {
+            "로그인",
+            "검색",
+            "상세",
+            "예약",
+            "결제",
+            "마이페이지",
+            "파트너",
+            "관리자",
+        }
+        explicit_names = " ".join(
+            screen.screen_name
+            for screen in spec.screens
+            if 21 in screen.evidence_requirement_ids
+        )
+        self.assertTrue(
+            all(term in explicit_names for term in explicit_screen_terms)
+        )
+        all_covered_ids = {
+            requirement_id
+            for screen in spec.screens
+            for requirement_id in screen.evidence_requirement_ids
+        }
+        self.assertEqual(all_covered_ids, set(range(1, 22)))
+
+        serialized = json.dumps(spec.model_dump(), ensure_ascii=False)
+        for forbidden in ("Pmate AI", "68%", "D-42", "24건", "주간 보고서 생성"):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_multi_actor_journeys_are_separate_and_traceable(self):
+        spec = adaptive_mobile_rfp_spec()
+        self.assertEqual(
+            [journey.actor for journey in spec.journeys],
+            ["CUSTOMER", "PARTNER", "ADMIN"],
+        )
+        self.assertEqual(
+            list(dict.fromkeys(screen.journey_id for screen in spec.screens)),
+            [journey.journey_id for journey in spec.journeys],
+        )
+
+        for journey in spec.journeys:
+            journey_screens = [
+                screen
+                for screen in spec.screens
+                if screen.journey_id == journey.journey_id
+            ]
+            with self.subTest(actor=journey.actor):
+                self.assertTrue(journey_screens)
+                self.assertTrue(
+                    all(screen.actor == journey.actor for screen in journey_screens)
+                )
+                self.assertTrue(
+                    all(
+                        screen.platform == journey.platform
+                        for screen in journey_screens
+                    )
+                )
+                self.assertEqual(
+                    [screen.journey_step for screen in journey_screens],
+                    list(range(1, len(journey_screens) + 1)),
+                )
+                self.assertTrue(
+                    all(
+                        set(screen.evidence_requirement_ids)
+                        <= set(journey.evidence_requirement_ids)
+                        for screen in journey_screens
+                    )
+                )
+
+    def test_spec_rejects_duplicate_screen_names_and_cross_actor_screens(self):
+        duplicate = adaptive_ecommerce_spec().model_dump()
+        duplicate["screens"][1]["screen_name"] = duplicate["screens"][0][
+            "screen_name"
+        ]
+        with self.assertRaises(ValidationError):
+            UiMockupSpec.model_validate(duplicate)
+
+        cross_actor = adaptive_mobile_rfp_spec().model_dump()
+        cross_actor["screens"][0]["actor"] = "ADMIN"
+        with self.assertRaises(ValidationError):
+            UiMockupSpec.model_validate(cross_actor)
+
+    def test_generation_rejects_cross_journey_and_unknown_journey_evidence(self):
+        cross_journey = adaptive_mobile_rfp_spec()
+        cross_journey.screens[0].evidence_requirement_ids = [15]
+        with self.assertRaises(UiMockupLLMGenerationError):
+            self._generate_with_mock(adaptive_mobile_rfp_payload(), cross_journey)
+
+        unknown = adaptive_mobile_rfp_spec()
+        unknown.journeys[0].evidence_requirement_ids.append(999)
+        with self.assertRaises(UiMockupLLMGenerationError):
+            self._generate_with_mock(adaptive_mobile_rfp_payload(), unknown)
+
+        uncovered = adaptive_mobile_rfp_spec()
+        uncovered.journeys[0].evidence_requirement_ids.append(20)
+        with self.assertRaises(UiMockupLLMGenerationError):
+            self._generate_with_mock(adaptive_mobile_rfp_payload(), uncovered)
+
+    def test_spec_limits_actor_types_to_three(self):
+        payload = adaptive_mobile_rfp_spec().model_dump()
+        public_journey = deepcopy(payload["journeys"][-1])
+        public_journey.update(
+            {
+                "journey_id": "PUBLIC_DISCOVERY",
+                "actor": "PUBLIC",
+                "goal": "공개 서비스 확인",
+                "summary": "방문자가 공개 서비스를 확인합니다.",
+            }
+        )
+        public_screen = deepcopy(payload["screens"][-1])
+        public_screen.update(
+            {
+                "screen_name": "방문자 공개 서비스 안내",
+                "journey_id": "PUBLIC_DISCOVERY",
+                "actor": "PUBLIC",
+                "journey_step": 1,
+            }
+        )
+        payload["journeys"].append(public_journey)
+        payload["screens"].append(public_screen)
+        with self.assertRaises(ValidationError):
+            UiMockupSpec.model_validate(payload)
+
+    def test_adaptive_renderer_uses_dynamic_height_and_valid_jpeg(self):
+        specs = [
+            simple_login_spec(),
+            adaptive_ecommerce_spec(),
+            adaptive_mobile_rfp_spec(),
+            multi_actor_service_spec(),
+        ]
+        with patch(
+            "app.domains.planning_resources.ui_mockup._resolve_font_path",
+            return_value=usable_font_path(),
+        ):
+            rendered = [render_ui_mockup(spec) for spec in specs]
+
+        self.assertEqual(rendered[0].height, 1080)
+        self.assertGreater(rendered[1].height, 1080)
+        self.assertGreater(rendered[2].height, rendered[1].height)
+        self.assertGreater(rendered[3].height, 1080)
+        for result in rendered:
+            self.assertEqual(result.width, 1920)
+            self.assertLessEqual(result.height, 7200)
+            self.assertTrue(result.content.startswith(b"\xff\xd8\xff"))
+            image = Image.open(BytesIO(result.content))
+            self.assertEqual(image.size, (result.width, result.height))
+
+    def test_pm_saas_keeps_compact_web_dashboard_list_detail(self):
+        spec = mockup_spec()
+        self.assertEqual(spec.platform, "WEB")
+        self.assertEqual(len(spec.screens), 3)
+        self.assertEqual(
+            [screen.page_type for screen in spec.screens],
+            ["DASHBOARD", "LIST", "DETAIL"],
+        )
+        self.assertTrue(all(screen.platform == "WEB" for screen in spec.screens))
+
+    def test_generation_prompt_uses_coverage_based_adaptive_selection(self):
+        instructions = UiMockupLLMService._instructions()
+        self.assertIn("Requirement → Actor → Goal → Journey → Screen", instructions)
+        self.assertIn("coverage", instructions)
+        self.assertIn("최대 12개", instructions)
+        self.assertIn("journey_id", instructions)
+        self.assertIn("중복 화면", instructions)
+        self.assertNotIn("대표 화면 1~3개", instructions)
+        self.assertNotIn("화면이 3개를 넘는", instructions)
 
     def test_cross_domain_fixtures_select_different_ordered_journeys(self):
         fixtures = {
@@ -853,7 +1596,7 @@ class UiMockupTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["project_id"], 17)
         self.assertGreaterEqual(len(body["mockup"]["screens"]), 1)
-        self.assertLessEqual(len(body["mockup"]["screens"]), 3)
+        self.assertLessEqual(len(body["mockup"]["screens"]), 12)
         self.assertTrue(base64.b64decode(body["image_base64"]).startswith(b"\xff\xd8\xff"))
 
     def test_assessment_fixtures_use_structured_output(self):

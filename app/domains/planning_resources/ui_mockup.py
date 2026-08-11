@@ -18,6 +18,13 @@ JPEG_CONTENT_TYPE = "image/jpeg"
 JPEG_QUALITY = 92
 BOARD_WIDTH = 1920
 BOARD_HEIGHT = 1080
+MAX_UI_MOCKUP_SCREENS = 12
+MAX_UI_MOCKUP_JOURNEYS = 4
+SCREEN_COLUMNS = 3
+SCREEN_HEIGHT = 890
+SCREEN_ROW_GAP = 28
+JOURNEY_HEADER_HEIGHT = 68
+JOURNEY_GAP = 38
 
 ComponentType = Literal[
     "header",
@@ -52,6 +59,17 @@ Actor = Literal[
     "OPERATOR",
     "PUBLIC",
 ]
+
+_ACTOR_LABELS: dict[str, str] = {
+    "CUSTOMER": "고객",
+    "PARTNER": "파트너",
+    "ADMIN": "관리자",
+    "PROJECT_MANAGER": "프로젝트 관리자",
+    "TEAM_MEMBER": "팀원",
+    "COMMUNITY_MEMBER": "커뮤니티 회원",
+    "OPERATOR": "운영자",
+    "PUBLIC": "방문자",
+}
 PageType = Literal[
     "DASHBOARD",
     "LIST",
@@ -80,6 +98,10 @@ _GENERIC_SCREEN_NAMES = {
     "폼 화면",
     "관리 화면",
 }
+
+_GENERIC_SCREEN_NAME_PATTERN = re.compile(
+    r"^(메인|목록|상세|폼|관리)\s*(?:\d+\s*)?화면$"
+)
 
 _SEMANTIC_COMPONENTS = frozenset({
     "search_bar",
@@ -195,13 +217,48 @@ class UiMockupSection(BaseModel):
         return self
 
 
+def _normalize_journey_id(value: str) -> str:
+    normalized = re.sub(r"[^A-Z0-9]+", "_", value.strip().upper()).strip("_")
+    if not normalized:
+        raise ValueError("journey id is required")
+    return normalized[:30]
+
+
+class UiMockupJourney(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    journey_id: str = Field(min_length=1, max_length=30)
+    actor: Actor
+    goal: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=1, max_length=300)
+    platform: Platform
+    evidence_requirement_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        min_length=1,
+        max_length=60,
+    )
+
+    @model_validator(mode="after")
+    def normalize(self) -> "UiMockupJourney":
+        self.journey_id = _normalize_journey_id(self.journey_id)
+        self.goal = " ".join(self.goal.split())
+        self.summary = " ".join(self.summary.split())
+        self.evidence_requirement_ids = list(
+            dict.fromkeys(self.evidence_requirement_ids)
+        )
+        if not self.goal or not self.summary:
+            raise ValueError("journey goal and summary are required")
+        return self
+
+
 class UiMockupScreen(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     screen_name: str = Field(min_length=1, max_length=60)
     purpose: str = Field(min_length=1, max_length=160)
+    journey_id: str = Field(default="PRIMARY", min_length=1, max_length=30)
     actor: Actor
-    journey_step: int = Field(ge=1, le=3)
+    platform: Platform | None = None
+    journey_step: int = Field(ge=1, le=MAX_UI_MOCKUP_SCREENS)
     evidence_requirement_ids: list[Annotated[int, Field(gt=0)]] = Field(
         min_length=1,
         max_length=6,
@@ -217,6 +274,7 @@ class UiMockupScreen(BaseModel):
     def normalize(self) -> "UiMockupScreen":
         self.screen_name = self.screen_name.strip()
         self.purpose = self.purpose.strip()
+        self.journey_id = _normalize_journey_id(self.journey_id)
         self.navigation = [item.strip()[:30] for item in self.navigation if item.strip()]
         self.primary_actions = [
             item.strip()[:30] for item in self.primary_actions if item.strip()
@@ -226,7 +284,10 @@ class UiMockupScreen(BaseModel):
         )
         if not self.screen_name or not self.purpose:
             raise ValueError("screen name and purpose are required")
-        if self.screen_name in _GENERIC_SCREEN_NAMES:
+        if (
+            self.screen_name in _GENERIC_SCREEN_NAMES
+            or _GENERIC_SCREEN_NAME_PATTERN.fullmatch(self.screen_name)
+        ):
             raise ValueError("screen name must describe its domain purpose")
         if self.navigation_type == "NONE":
             self.navigation = []
@@ -243,19 +304,78 @@ class UiMockupSpec(BaseModel):
     primary_actor: Actor
     journey_summary: str = Field(min_length=1, max_length=300)
     platform: Platform
-    screens: list[UiMockupScreen] = Field(min_length=1, max_length=3)
+    journeys: list[UiMockupJourney] = Field(
+        default_factory=list,
+        max_length=MAX_UI_MOCKUP_JOURNEYS,
+    )
+    screens: list[UiMockupScreen] = Field(
+        min_length=1,
+        max_length=MAX_UI_MOCKUP_SCREENS,
+    )
 
     @model_validator(mode="after")
     def validate_platform_navigation(self) -> "UiMockupSpec":
-        if self.platform == "MOBILE" and any(
-            screen.navigation_type == "SIDEBAR" for screen in self.screens
-        ):
-            raise ValueError("mobile screens cannot use sidebar navigation")
-        if any(screen.actor != self.primary_actor for screen in self.screens):
-            raise ValueError("all representative screens must use the primary actor")
-        expected_steps = list(range(1, len(self.screens) + 1))
-        if [screen.journey_step for screen in self.screens] != expected_steps:
-            raise ValueError("screens must follow contiguous journey order")
+        if not self.journeys:
+            evidence_ids = list(dict.fromkeys(
+                requirement_id
+                for screen in self.screens
+                for requirement_id in screen.evidence_requirement_ids
+            ))
+            self.journeys = [
+                UiMockupJourney(
+                    journey_id="PRIMARY",
+                    actor=self.primary_actor,
+                    goal=self.journey_summary,
+                    summary=self.journey_summary,
+                    platform=self.platform,
+                    evidence_requirement_ids=evidence_ids,
+                )
+            ]
+
+        journey_ids = [journey.journey_id for journey in self.journeys]
+        if len(journey_ids) != len(set(journey_ids)):
+            raise ValueError("journey ids must be unique")
+        if len({journey.actor for journey in self.journeys}) > 3:
+            raise ValueError("a mockup can include at most three actor types")
+        if self.journeys[0].actor != self.primary_actor:
+            raise ValueError("the first journey must belong to the primary actor")
+        if self.journeys[0].platform != self.platform:
+            raise ValueError("the first journey must use the primary platform")
+
+        journeys_by_id = {
+            journey.journey_id: journey for journey in self.journeys
+        }
+        for screen in self.screens:
+            journey = journeys_by_id.get(screen.journey_id)
+            if journey is None:
+                raise ValueError("every screen must reference a declared journey")
+            if screen.actor != journey.actor:
+                raise ValueError("screen actor must match its journey actor")
+            if screen.platform is None:
+                screen.platform = journey.platform
+            elif screen.platform != journey.platform:
+                raise ValueError("screen platform must match its journey platform")
+            if screen.platform == "MOBILE" and screen.navigation_type == "SIDEBAR":
+                raise ValueError("mobile screens cannot use sidebar navigation")
+
+        screen_journey_order = list(dict.fromkeys(
+            screen.journey_id for screen in self.screens
+        ))
+        if screen_journey_order != journey_ids:
+            raise ValueError("screens must be grouped in declared journey order")
+        for journey_id in journey_ids:
+            journey_screens = [
+                screen for screen in self.screens if screen.journey_id == journey_id
+            ]
+            expected_steps = list(range(1, len(journey_screens) + 1))
+            if [screen.journey_step for screen in journey_screens] != expected_steps:
+                raise ValueError("screens must follow contiguous journey order")
+
+        normalized_names = [
+            " ".join(screen.screen_name.lower().split()) for screen in self.screens
+        ]
+        if len(normalized_names) != len(set(normalized_names)):
+            raise ValueError("screen names must be unique")
         return self
 
 
@@ -274,8 +394,8 @@ class UiMockupGenerationResponse(BaseModel):
 @dataclass(frozen=True)
 class RenderedUiMockup:
     content: bytes
-    width: int = BOARD_WIDTH
-    height: int = BOARD_HEIGHT
+    width: int
+    height: int
 
     def to_base64(self) -> str:
         return base64.b64encode(self.content).decode("ascii")
@@ -1119,35 +1239,177 @@ def _draw_web_screen(
     _draw_page_content(draw, screen, (content_x1, content_y1, content_x2, content_y2), fonts, False)
 
 
-def render_ui_mockup(spec: UiMockupSpec) -> RenderedUiMockup:
-    fonts = _load_fonts()
-    image = Image.new("RGB", (BOARD_WIDTH, BOARD_HEIGHT), "#F3F6FA")
-    draw = ImageDraw.Draw(image)
-    draw.text((60, 32), _fit_text(draw, spec.project_title, fonts.title, 1250), fill="#111827", font=fonts.title)
-    draw.text((62, 86), _fit_text(draw, spec.design_summary, fonts.body, 1450), fill="#64748B", font=fonts.body)
+def _draw_platform_badge(
+    draw: ImageDraw.ImageDraw,
+    label: str,
+    fonts: _Fonts,
+) -> None:
     badge_width = 104
-    draw.rounded_rectangle((BOARD_WIDTH - 60 - badge_width, 42, BOARD_WIDTH - 60, 78), radius=18, fill="#DDE9FF")
-    platform_label = "모바일" if spec.platform == "MOBILE" else "웹"
-    draw.text((BOARD_WIDTH - 60 - badge_width + 25, 51), platform_label, fill="#2458B5", font=fonts.body)
+    left = BOARD_WIDTH - 60 - badge_width
+    draw.rounded_rectangle(
+        (left, 42, BOARD_WIDTH - 60, 78),
+        radius=18,
+        fill="#DDE9FF",
+    )
+    fitted = _fit_text(draw, label, fonts.body, badge_width - 22)
+    draw.text(
+        (left + (badge_width - _text_width(draw, fitted, fonts.body)) // 2, 51),
+        fitted,
+        fill="#2458B5",
+        font=fonts.body,
+    )
 
+
+def _draw_screen_row(
+    draw: ImageDraw.ImageDraw,
+    screens: list[UiMockupScreen],
+    top: int,
+    fonts: _Fonts,
+) -> None:
+    platform = screens[0].platform
+    if platform == "MOBILE":
+        gap = 54
+        screen_width = 420
+    else:
+        gap = 28
+        available = BOARD_WIDTH - 112 - gap * (len(screens) - 1)
+        screen_width = min(900, available // len(screens))
+    total_width = screen_width * len(screens) + gap * (len(screens) - 1)
+    start = (BOARD_WIDTH - total_width) // 2
+    for index, screen in enumerate(screens):
+        left = start + index * (screen_width + gap)
+        box = (left, top, left + screen_width, top + SCREEN_HEIGHT)
+        if screen.platform == "MOBILE":
+            _draw_mobile_screen(draw, screen, box, fonts)
+        else:
+            _draw_web_screen(draw, screen, box, fonts)
+
+
+def _adaptive_board_height(spec: UiMockupSpec) -> int:
+    height = 130
+    for journey in spec.journeys:
+        screen_count = sum(
+            screen.journey_id == journey.journey_id for screen in spec.screens
+        )
+        row_count = (screen_count + SCREEN_COLUMNS - 1) // SCREEN_COLUMNS
+        height += (
+            JOURNEY_HEADER_HEIGHT
+            + row_count * SCREEN_HEIGHT
+            + max(0, row_count - 1) * SCREEN_ROW_GAP
+            + JOURNEY_GAP
+        )
+    return max(BOARD_HEIGHT, height + 20)
+
+
+def _draw_legacy_single_row(
+    draw: ImageDraw.ImageDraw,
+    spec: UiMockupSpec,
+    fonts: _Fonts,
+) -> None:
     screen_count = len(spec.screens)
     top = 135
     bottom = 1025
     if spec.platform == "MOBILE":
         gap = 54
-        screen_width = min(420, (BOARD_WIDTH - 112 - gap * (screen_count - 1)) // screen_count)
+        screen_width = min(
+            420,
+            (BOARD_WIDTH - 112 - gap * (screen_count - 1)) // screen_count,
+        )
         total_width = screen_width * screen_count + gap * (screen_count - 1)
         start = (BOARD_WIDTH - total_width) // 2
         for index, screen in enumerate(spec.screens):
             left = start + index * (screen_width + gap)
-            _draw_mobile_screen(draw, screen, (left, top, left + screen_width, bottom), fonts)
+            _draw_mobile_screen(
+                draw,
+                screen,
+                (left, top, left + screen_width, bottom),
+                fonts,
+            )
+        return
+
+    gap = 28
+    margin = 56
+    screen_width = (
+        BOARD_WIDTH - margin * 2 - gap * (screen_count - 1)
+    ) // screen_count
+    for index, screen in enumerate(spec.screens):
+        left = margin + index * (screen_width + gap)
+        _draw_web_screen(
+            draw,
+            screen,
+            (left, top, left + screen_width, bottom),
+            fonts,
+        )
+
+
+def render_ui_mockup(spec: UiMockupSpec) -> RenderedUiMockup:
+    fonts = _load_fonts()
+    legacy_layout = len(spec.journeys) == 1 and len(spec.screens) <= 3
+    board_height = BOARD_HEIGHT if legacy_layout else _adaptive_board_height(spec)
+    image = Image.new("RGB", (BOARD_WIDTH, board_height), "#F3F6FA")
+    draw = ImageDraw.Draw(image)
+    draw.text((60, 32), _fit_text(draw, spec.project_title, fonts.title, 1250), fill="#111827", font=fonts.title)
+    draw.text((62, 86), _fit_text(draw, spec.design_summary, fonts.body, 1450), fill="#64748B", font=fonts.body)
+    platforms = {screen.platform for screen in spec.screens}
+    platform_label = (
+        "혼합"
+        if len(platforms) > 1
+        else "모바일"
+        if spec.platform == "MOBILE"
+        else "웹"
+    )
+    _draw_platform_badge(draw, platform_label, fonts)
+
+    if legacy_layout:
+        _draw_legacy_single_row(draw, spec, fonts)
     else:
-        gap = 28
-        margin = 56
-        screen_width = (BOARD_WIDTH - margin * 2 - gap * (screen_count - 1)) // screen_count
-        for index, screen in enumerate(spec.screens):
-            left = margin + index * (screen_width + gap)
-            _draw_web_screen(draw, screen, (left, top, left + screen_width, bottom), fonts)
+        top = 130
+        for journey in spec.journeys:
+            journey_screens = [
+                screen
+                for screen in spec.screens
+                if screen.journey_id == journey.journey_id
+            ]
+            header_box = (
+                56,
+                top,
+                BOARD_WIDTH - 56,
+                top + JOURNEY_HEADER_HEIGHT,
+            )
+            draw.rounded_rectangle(
+                header_box,
+                radius=12,
+                fill="#E6EDF7",
+                outline="#D4DEEC",
+            )
+            actor_label = _ACTOR_LABELS.get(journey.actor, journey.actor)
+            draw.text(
+                (76, top + 11),
+                _fit_text(draw, f"{actor_label} 여정 · {journey.goal}", fonts.heading, 1280),
+                fill="#172033",
+                font=fonts.heading,
+            )
+            draw.text(
+                (77, top + 39),
+                _fit_text(draw, journey.summary, fonts.small, 1450),
+                fill="#64748B",
+                font=fonts.small,
+            )
+            journey_platform = "모바일" if journey.platform == "MOBILE" else "웹"
+            draw.text(
+                (BOARD_WIDTH - 135, top + 24),
+                journey_platform,
+                fill="#2458B5",
+                font=fonts.body,
+            )
+            top += JOURNEY_HEADER_HEIGHT
+            for row_start in range(0, len(journey_screens), SCREEN_COLUMNS):
+                row = journey_screens[row_start:row_start + SCREEN_COLUMNS]
+                _draw_screen_row(draw, row, top, fonts)
+                top += SCREEN_HEIGHT
+                if row_start + SCREEN_COLUMNS < len(journey_screens):
+                    top += SCREEN_ROW_GAP
+            top += JOURNEY_GAP
 
     output = BytesIO()
     try:
@@ -1157,4 +1419,8 @@ def render_ui_mockup(spec: UiMockupSpec) -> RenderedUiMockup:
     content = output.getvalue()
     if not content.startswith(b"\xff\xd8\xff"):
         raise UiMockupRenderError("The rendered UI mockup is not a JPEG image")
-    return RenderedUiMockup(content=content)
+    return RenderedUiMockup(
+        content=content,
+        width=BOARD_WIDTH,
+        height=board_height,
+    )
