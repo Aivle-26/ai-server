@@ -87,6 +87,24 @@ class PlanningWbsLlmServiceTest(unittest.TestCase):
             ):
                 self.service.generate([{"requirements": []}])
 
+    def test_client_uses_five_minute_timeout(self):
+        responses = Responses(result=plan())
+        with patch(
+            "app.domains.planning_wbs.llm_service.OpenAI",
+            return_value=SimpleNamespace(responses=responses),
+        ) as client:
+            result = self.service._generate_one(
+                "test-key",
+                {"requirements": []},
+            )
+
+        self.assertIsInstance(result, GeneratedWBSPlan)
+        client.assert_called_once_with(
+            api_key="test-key",
+            timeout=300,
+            max_retries=1,
+        )
+
     def test_instructions_forbid_schedule_and_assignee_fields(self):
         instructions = self.service._instructions()
         for phrase in ("일정", "담당자", "requirement_id", "phase_name"):

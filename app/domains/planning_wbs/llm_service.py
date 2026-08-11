@@ -13,6 +13,8 @@ from app.domains.planning_documents.schemas import ArtifactType
 
 load_dotenv()
 
+WBS_LLM_TIMEOUT_SECONDS = 300
+
 
 class GeneratedWBSTask(BaseModel):
     name: str
@@ -67,7 +69,11 @@ class PlanningWBSLLMService:
             raise WBSLLMGenerationError("OpenAI WBS 생성 요청에 실패했습니다.") from exc
 
     def _generate_one(self, api_key: str, context: dict) -> GeneratedWBSPlan:
-        client = OpenAI(api_key=api_key, timeout=60, max_retries=1)
+        client = OpenAI(
+            api_key=api_key,
+            timeout=WBS_LLM_TIMEOUT_SECONDS,
+            max_retries=1,
+        )
         return self._request_one(client, context)
 
     def _request_one(self, client: OpenAI, context: dict) -> GeneratedWBSPlan:
