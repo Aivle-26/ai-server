@@ -181,14 +181,29 @@ def _team_content(
         task.wbs_id: task.wbs_name for task in request.wbs_tasks
     }
     member_id = team.member_ids[0]
-    primary_role = " · ".join(team.primary_roles) or "역할 미정"
+    member = next(
+        (
+            candidate
+            for candidate in request.project_members
+            if candidate.project_member_id == member_id
+        ),
+        None,
+    )
+    missing_capability = member is not None and not member.roles
     lines: list[tuple[str, str]] = [
         ("small", section_label),
         ("heading", _member_label(request, member_id)),
-        ("body", f"주 역할  {primary_role}"),
     ]
-    if team.secondary_roles:
-        lines.append(("body", "겸임  " + " · ".join(team.secondary_roles)))
+    if missing_capability:
+        lines.extend([
+            ("body", "상태  역량 미등록"),
+            ("body", "배정 역할: 없음"),
+        ])
+    else:
+        primary_role = " · ".join(team.primary_roles) or "역할 미정"
+        lines.append(("body", f"주 역할  {primary_role}"))
+        if team.secondary_roles:
+            lines.append(("body", "겸임  " + " · ".join(team.secondary_roles)))
 
     if team.assigned_wbs_ids:
         lines.append(("body", f"담당 WBS  {len(team.assigned_wbs_ids)}건"))
@@ -240,6 +255,11 @@ def _warning_summary(organization: OrganizationView) -> tuple[str, ...]:
     hidden_gap_count = len(organization.role_gaps) - len(visible_gaps)
     if hidden_gap_count:
         lines.append(f"+ {hidden_gap_count}개 역할 추가 검토 필요")
+    lines.extend(
+        warning
+        for warning in organization.warnings
+        if warning.startswith("역량 정보가 없어 자동 배정에서 제외된 팀원이 ")
+    )
     return tuple(lines)
 
 
@@ -352,7 +372,15 @@ def render_organization_chart(
     for index in range(0, len(prepared), columns):
         row_heights.append(max(height for _, _, height in prepared[index:index + columns]))
     teams_height = sum(row_heights) + max(0, len(row_heights) - 1) * card_gap_y
-    warnings = bool(organization.role_gaps or organization.unassigned_wbs_ids)
+    has_missing_capability_warning = any(
+        warning.startswith("역량 정보가 없어 자동 배정에서 제외된 팀원이 ")
+        for warning in organization.warnings
+    )
+    warnings = bool(
+        organization.role_gaps
+        or organization.unassigned_wbs_ids
+        or has_missing_capability_warning
+    )
     warning_lines = _warning_summary(organization) if warnings else ()
     warnings_height = 86 + len(warning_lines) * 34 if warnings else 0
     content_bottom = (

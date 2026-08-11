@@ -67,7 +67,7 @@ class ProjectMemberCandidate(BaseModel):
 
     project_member_id: MemberId
     member_name: str | None = Field(default=None, max_length=100)
-    roles: list[str] = Field(min_length=1, max_length=20)
+    roles: list[str] = Field(default_factory=list, max_length=20)
     skills: list[MemberSkill] = Field(default_factory=list, max_length=100)
     allocations: list[MemberAllocation] = Field(default_factory=list, max_length=20)
 
@@ -84,8 +84,6 @@ class ProjectMemberCandidate(BaseModel):
             if normalized and normalized not in seen_roles:
                 roles.append(normalized)
                 seen_roles.add(normalized)
-        if not roles:
-            raise ValueError("프로젝트 역할이 한 개 이상 필요합니다.")
         self.roles = roles
 
         skill_codes = [skill.skill_code for skill in self.skills]

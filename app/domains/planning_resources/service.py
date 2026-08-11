@@ -99,6 +99,14 @@ class PlanningResourceService:
         plans: list[GeneratedResourcePlan],
     ) -> dict[str, Any]:
         warnings = []
+        unknown_capability_count = sum(
+            1 for member in request.project_members if not member.roles
+        )
+        if unknown_capability_count:
+            warnings.append(
+                "역량 정보가 없어 자동 배정에서 제외된 팀원이 "
+                f"{unknown_capability_count}명 있습니다."
+            )
         estimates = self._estimate_map(plans)
         allowed_role_codes = {
             *DEFAULT_ROLE_CODES,

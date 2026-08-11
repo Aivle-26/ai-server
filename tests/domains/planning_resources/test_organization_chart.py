@@ -414,6 +414,113 @@ class OrganizationChartTest(unittest.TestCase):
         with Image.open(BytesIO(rendered.content)) as image:
             self.assertEqual(image.format, "JPEG")
 
+    def test_seven_of_eight_capabilities_keeps_unknown_member_unassigned(self):
+        payload = eight_member_planning_payload()
+        unknown_member_id = payload["project_members"][-1]["project_member_id"]
+        payload["project_members"][-1]["roles"] = []
+        request = PlanningResourceRequest.model_validate(payload)
+        response = eight_member_recommendation_payload()
+        response["warnings"].append(
+            "역량 정보가 없어 자동 배정에서 제외된 팀원이 1명 있습니다."
+        )
+
+        view = build_organization_chart(
+            request,
+            response,
+            generated_at=datetime(2026, 8, 10, 1, 0, tzinfo=timezone.utc),
+        )
+        displayed_member_ids = [
+            member_id for team in view.teams for member_id in team.member_ids
+        ]
+        unknown_team = next(
+            team for team in view.teams if team.member_ids == [unknown_member_id]
+        )
+
+        self.assertEqual(len(displayed_member_ids), 8)
+        self.assertEqual(len(set(displayed_member_ids)), 8)
+        self.assertEqual(
+            set(displayed_member_ids),
+            {
+                member["project_member_id"]
+                for member in payload["project_members"]
+            },
+        )
+        self.assertEqual(unknown_team.primary_roles, [])
+        self.assertEqual(unknown_team.secondary_roles, [])
+        self.assertEqual(unknown_team.assigned_wbs_ids, [])
+        self.assertIn(
+            "역량 정보가 없어 자동 배정에서 제외된 팀원이 1명 있습니다.",
+            view.warnings,
+        )
+        self.assertIn(
+            "상태  역량 미등록",
+            [value for _, value in chart_module._team_content(request, unknown_team)],
+        )
+
+        with patch.object(chart_module, "_load_fonts", default_fonts):
+            rendered = render_organization_chart(request, view)
+        self.assertTrue(rendered.content.startswith(b"\xff\xd8\xff"))
+
+    def test_four_of_eight_capabilities_only_assigns_known_members(self):
+        payload = eight_member_planning_payload()
+        unknown_member_ids = {
+            member["project_member_id"] for member in payload["project_members"][4:]
+        }
+        for member in payload["project_members"][4:]:
+            member["roles"] = []
+        request = PlanningResourceRequest.model_validate(payload)
+        response = eight_member_recommendation_payload()
+        for assignment in response["assignments"]:
+            assignment["recommended_members"] = [
+                member
+                for member in assignment["recommended_members"]
+                if member["project_member_id"] not in unknown_member_ids
+            ]
+        response["unassigned_wbs_ids"] = [7, 8, 9]
+        response["warnings"].append(
+            "역량 정보가 없어 자동 배정에서 제외된 팀원이 4명 있습니다."
+        )
+
+        view = build_organization_chart(
+            request,
+            response,
+            generated_at=datetime(2026, 8, 10, 1, 0, tzinfo=timezone.utc),
+        )
+        displayed_member_ids = [
+            member_id for team in view.teams for member_id in team.member_ids
+        ]
+        unknown_teams = [
+            team for team in view.teams if team.member_ids[0] in unknown_member_ids
+        ]
+
+        self.assertEqual(len(displayed_member_ids), 8)
+        self.assertEqual(len(set(displayed_member_ids)), 8)
+        self.assertEqual(
+            set(displayed_member_ids),
+            {
+                member["project_member_id"]
+                for member in payload["project_members"]
+            },
+        )
+        self.assertEqual(len(unknown_teams), 4)
+        self.assertTrue(
+            all(
+                not team.primary_roles
+                and not team.secondary_roles
+                and not team.assigned_wbs_ids
+                for team in unknown_teams
+            )
+        )
+        self.assertEqual(view.unassigned_wbs_ids, [7, 8, 9])
+        self.assertIn(
+            "역량 정보가 없어 자동 배정에서 제외된 팀원이 4명 있습니다.",
+            chart_module._warning_summary(view),
+        )
+
+        with patch.object(chart_module, "_load_fonts", default_fonts):
+            rendered = render_organization_chart(request, view)
+        self.assertTrue(rendered.content.startswith(b"\xff\xd8\xff"))
+
     def test_builder_rejects_invalid_pm_leader_relationship_and_cycle(self):
         invalid = [
             {"project_manager_member_id": 999},

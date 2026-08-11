@@ -71,11 +71,13 @@ class PlanningResourceSchemaTest(unittest.TestCase):
             ):
                 PlanningResourceRequest.model_validate(payload)
 
-    def test_member_requires_at_least_one_nonblank_role(self):
-        with self.assertRaises(ValidationError):
-            ProjectMemberCandidate.model_validate(
-                {"project_member_id": 1, "roles": [" "]}
-            )
+    def test_member_allows_unknown_capability_without_inventing_role(self):
+        member = ProjectMemberCandidate.model_validate(
+            {"project_member_id": 1, "roles": [" "], "skills": []}
+        )
+
+        self.assertEqual(member.roles, [])
+        self.assertEqual(member.skills, [])
 
 
 if __name__ == "__main__":

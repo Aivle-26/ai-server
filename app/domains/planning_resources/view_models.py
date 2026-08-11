@@ -202,7 +202,17 @@ class OrganizationView(BaseModel):
     teams: list[OrganizationTeam] = Field(default_factory=list)
     role_gaps: list[OrganizationRoleGap] = Field(default_factory=list)
     unassigned_wbs_ids: list[PositiveId] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
     generated_at: AwareDatetime
+
+    @field_validator("warnings", mode="before")
+    @classmethod
+    def normalize_warnings(cls, value: object) -> object:
+        if not isinstance(value, list):
+            return value
+        normalized = [_nonblank(item, "organization warning") for item in value]
+        _ensure_unique(normalized, "organization warnings")
+        return normalized
 
     @model_validator(mode="after")
     def validate_references(self) -> "OrganizationView":

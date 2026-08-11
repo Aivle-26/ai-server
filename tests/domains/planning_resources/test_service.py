@@ -142,6 +142,31 @@ class PlanningResourceServiceTest(unittest.TestCase):
         self.assertEqual(result["unassigned_wbs_ids"], [3])
         self.assertTrue(any("평일이 없어" in item for item in result["warnings"]))
 
+    def test_unknown_capability_member_is_not_ranked_and_adds_warning(self):
+        payload = resource_request_payload()
+        unknown_member_id = payload["project_members"][0]["project_member_id"]
+        payload["project_members"][0]["roles"] = []
+        payload["project_members"][0]["skills"] = []
+        request = PlanningResourceRequest.model_validate(payload)
+        plans = [
+            GeneratedResourcePlan(
+                task_estimates=[estimate(task.wbs_id) for task in request.wbs_tasks]
+            )
+        ]
+
+        result = self.service.build_recommendation(request, plans)
+        assigned_member_ids = {
+            member["project_member_id"]
+            for assignment in result["assignments"]
+            for member in assignment["recommended_members"]
+        }
+
+        self.assertNotIn(unknown_member_id, assigned_member_ids)
+        self.assertIn(
+            "역량 정보가 없어 자동 배정에서 제외된 팀원이 1명 있습니다.",
+            result["warnings"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

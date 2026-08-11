@@ -197,7 +197,7 @@ def _primary_role(
     assigned_roles: Sequence[str],
     *,
     is_project_manager: bool,
-) -> str:
+) -> str | None:
     if is_project_manager:
         return next(
             (
@@ -208,7 +208,7 @@ def _primary_role(
             "PROJECT_MANAGER",
         )
     if not assigned_roles:
-        return member.roles[0]
+        return member.roles[0] if member.roles else None
 
     counts = {
         role: assigned_roles.count(role) for role in set(assigned_roles)
@@ -370,7 +370,8 @@ def build_organization_chart(
         team_metadata = next(
             (
                 metadata_by_role[role]
-                for role in [primary_role, *secondary_roles]
+                for role in ([primary_role] if primary_role else [])
+                + secondary_roles
                 if role in metadata_by_role
             ),
             None,
@@ -416,7 +417,7 @@ def build_organization_chart(
                     member_id if is_designated_leader else None
                 ),
                 member_ids=[member_id],
-                primary_roles=[primary_role],
+                primary_roles=[primary_role] if primary_role else [],
                 secondary_roles=secondary_roles,
                 assigned_wbs_ids=_unique_in_order(
                     wbs_ids_by_member_id[member_id]
@@ -458,6 +459,7 @@ def build_organization_chart(
         teams=teams,
         role_gaps=role_gaps,
         unassigned_wbs_ids=list(context.unassigned_wbs_ids),
+        warnings=list(context.response.warnings),
         generated_at=generated_at,
     )
 
