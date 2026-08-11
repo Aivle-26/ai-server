@@ -30,6 +30,27 @@ ComponentType = Literal[
     "list",
     "modal",
 ]
+Platform = Literal["WEB", "MOBILE"]
+PageType = Literal[
+    "DASHBOARD",
+    "LIST",
+    "DETAIL",
+    "FORM",
+    "LANDING",
+    "ECOMMERCE",
+    "BOOKING",
+    "MAP",
+    "CHAT",
+]
+NavigationType = Literal["SIDEBAR", "TOP_NAV", "BOTTOM_NAV", "TABS", "NONE"]
+LayoutType = Literal[
+    "FULL_WIDTH",
+    "TWO_COLUMN",
+    "GRID",
+    "MASTER_DETAIL",
+    "FEED",
+    "FORM_FLOW",
+]
 
 _FONT_CANDIDATES = (
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -136,6 +157,9 @@ class UiMockupScreen(BaseModel):
 
     screen_name: str = Field(min_length=1, max_length=60)
     purpose: str = Field(min_length=1, max_length=160)
+    page_type: PageType
+    navigation_type: NavigationType
+    layout_type: LayoutType
     navigation: list[str] = Field(default_factory=list, max_length=5)
     sections: list[UiMockupSection] = Field(min_length=1, max_length=6)
     primary_actions: list[str] = Field(default_factory=list, max_length=3)
@@ -150,6 +174,10 @@ class UiMockupScreen(BaseModel):
         ]
         if not self.screen_name or not self.purpose:
             raise ValueError("screen name and purpose are required")
+        if self.navigation_type == "NONE":
+            self.navigation = []
+        elif not self.navigation:
+            raise ValueError("selected navigation type needs navigation labels")
         return self
 
 
@@ -158,7 +186,16 @@ class UiMockupSpec(BaseModel):
 
     project_title: str = Field(min_length=1, max_length=200)
     design_summary: str = Field(min_length=1, max_length=300)
+    platform: Platform
     screens: list[UiMockupScreen] = Field(min_length=1, max_length=3)
+
+    @model_validator(mode="after")
+    def validate_platform_navigation(self) -> "UiMockupSpec":
+        if self.platform == "MOBILE" and any(
+            screen.navigation_type == "SIDEBAR" for screen in self.screens
+        ):
+            raise ValueError("mobile screens cannot use sidebar navigation")
+        return self
 
 
 class UiMockupGenerationResponse(BaseModel):
@@ -297,8 +334,18 @@ def _draw_component(
     if component == "modal":
         inset = 22
         draw.rounded_rectangle((x1 + inset, top, x2 - inset, y2 - 12), radius=8, fill="#F9FAFC", outline="#CAD3E1")
-    items = section.items or ["핵심 정보", "상태 및 세부 내용", "사용자 작업"]
-    for index, item in enumerate(items[:3]):
+    if not section.items:
+        for index, width_ratio in enumerate((0.82, 0.66, 0.74)):
+            y = top + index * 28
+            if y + 12 > y2 - 8:
+                break
+            draw.rounded_rectangle(
+                (x1 + 16, y + 3, x1 + 16 + int((x2 - x1 - 38) * width_ratio), y + 11),
+                radius=4,
+                fill="#E7ECF4",
+            )
+        return
+    for index, item in enumerate(section.items[:3]):
         y = top + index * 28
         if y + 18 > y2 - 8:
             break
@@ -311,52 +358,486 @@ def _draw_component(
         )
 
 
+def _screen_labels(screen: UiMockupScreen, limit: int = 10) -> list[str]:
+    labels: list[str] = []
+    for section in screen.sections:
+        for value in (section.title, *section.items):
+            normalized = " ".join(value.split())
+            if normalized and normalized not in labels:
+                labels.append(normalized)
+            if len(labels) >= limit:
+                return labels
+    return labels
+
+
+def _draw_search(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    label: str,
+) -> None:
+    x1, y1, x2, y2 = box
+    draw.rounded_rectangle(box, radius=8, fill="#FFFFFF", outline="#D8E0EC", width=2)
+    draw.ellipse((x1 + 14, y1 + 12, x1 + 25, y1 + 23), outline="#718096", width=2)
+    draw.line((x1 + 24, y1 + 22, x1 + 30, y1 + 28), fill="#718096", width=2)
+    draw.text(
+        (x1 + 39, y1 + max(7, (y2 - y1 - 16) // 2)),
+        _fit_text(draw, label, fonts.small, x2 - x1 - 52),
+        fill="#64748B",
+        font=fonts.small,
+    )
+
+
+def _draw_action(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    label: str,
+) -> None:
+    x1, y1, x2, y2 = box
+    draw.rounded_rectangle(box, radius=8, fill="#2563EB")
+    fitted = _fit_text(draw, label, fonts.small, x2 - x1 - 20)
+    draw.text(
+        (x1 + max(10, (x2 - x1 - _text_width(draw, fitted, fonts.small)) // 2), y1 + 9),
+        fitted,
+        fill="#FFFFFF",
+        font=fonts.small,
+    )
+
+
+def _draw_dashboard(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    mobile: bool,
+) -> None:
+    x1, y1, x2, y2 = box
+    labels = _screen_labels(screen)
+    columns = 2 if mobile else 3
+    gap = 8 if mobile else 12
+    card_height = 72 if mobile else 92
+    card_width = (x2 - x1 - gap * (columns - 1)) // columns
+    for index in range(columns):
+        left = x1 + index * (card_width + gap)
+        draw.rounded_rectangle(
+            (left, y1, left + card_width, y1 + card_height),
+            radius=9,
+            fill="#FFFFFF",
+            outline="#DBE3EE",
+        )
+        if index < len(labels):
+            draw.text(
+                (left + 10, y1 + 10),
+                _fit_text(draw, labels[index], fonts.small, card_width - 20),
+                fill="#475569",
+                font=fonts.small,
+            )
+        draw.rounded_rectangle(
+            (left + 10, y1 + card_height - 24, left + max(42, card_width - 30), y1 + card_height - 14),
+            radius=4,
+            fill="#DCE8FF",
+        )
+
+    chart_top = y1 + card_height + gap
+    chart_bottom = min(y2, chart_top + (150 if mobile else 220))
+    draw.rounded_rectangle(
+        (x1, chart_top, x2, chart_bottom),
+        radius=10,
+        fill="#FFFFFF",
+        outline="#DBE3EE",
+    )
+    chart_width = x2 - x1 - 36
+    for index, ratio in enumerate((0.38, 0.58, 0.46, 0.72, 0.64)):
+        left = x1 + 18 + index * chart_width // 5
+        height = int((chart_bottom - chart_top - 55) * ratio)
+        draw.rounded_rectangle(
+            (left, chart_bottom - 18 - height, left + max(12, chart_width // 9), chart_bottom - 18),
+            radius=4,
+            fill=("#AFC8FF", "#7EA5FA", "#4F7FEF")[index % 3],
+        )
+
+    list_top = chart_bottom + gap
+    for index, label in enumerate(labels[columns:columns + 3]):
+        row_top = list_top + index * 42
+        if row_top + 34 > y2:
+            break
+        draw.rounded_rectangle((x1, row_top, x2, row_top + 34), radius=7, fill="#FFFFFF", outline="#E3E8F0")
+        draw.ellipse((x1 + 11, row_top + 12, x1 + 19, row_top + 20), fill="#4F7FEF")
+        draw.text((x1 + 28, row_top + 8), _fit_text(draw, label, fonts.small, x2 - x1 - 40), fill="#526074", font=fonts.small)
+
+
+def _draw_list_page(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    mobile: bool,
+) -> None:
+    x1, y1, x2, y2 = box
+    labels = _screen_labels(screen)
+    _draw_search(draw, (x1, y1, x2, y1 + 42), fonts, labels[0] if labels else "검색")
+    chip_top = y1 + 52
+    cursor = x1
+    for label in (screen.navigation or labels[1:])[:3]:
+        width = min(105, max(54, _text_width(draw, label, fonts.small) + 22))
+        if cursor + width > x2:
+            break
+        draw.rounded_rectangle((cursor, chip_top, cursor + width, chip_top + 28), radius=14, fill="#EAF1FF")
+        draw.text((cursor + 11, chip_top + 6), _fit_text(draw, label, fonts.small, width - 20), fill="#315EC7", font=fonts.small)
+        cursor += width + 7
+    row_top = chip_top + 40
+    row_height = 62 if mobile else 70
+    for index, label in enumerate(labels[1:7] or [""] * 5):
+        top = row_top + index * (row_height + 8)
+        if top + row_height > y2:
+            break
+        draw.rounded_rectangle((x1, top, x2, top + row_height), radius=9, fill="#FFFFFF", outline="#DDE4EE")
+        draw.rounded_rectangle((x1 + 11, top + 11, x1 + 47, top + 47), radius=7, fill="#DCE8FF")
+        if label:
+            draw.text((x1 + 58, top + 12), _fit_text(draw, label, fonts.body, x2 - x1 - 72), fill="#334155", font=fonts.body)
+        draw.rounded_rectangle((x1 + 58, top + 39, x2 - 22, top + 47), radius=4, fill="#E9EDF3")
+
+
+def _draw_detail(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    mobile: bool,
+) -> None:
+    x1, y1, x2, y2 = box
+    labels = _screen_labels(screen)
+    hero_height = 150 if mobile else 210
+    draw.rounded_rectangle((x1, y1, x2, y1 + hero_height), radius=12, fill="#DCE8F8")
+    draw.polygon(
+        ((x1 + 18, y1 + hero_height - 20), (x1 + 85, y1 + 65), (x1 + 145, y1 + hero_height - 20)),
+        fill="#B5CAE6",
+    )
+    content_top = y1 + hero_height + 14
+    for index, label in enumerate(labels[:4]):
+        top = content_top + index * (54 if mobile else 60)
+        if top + 45 > y2 - 48:
+            break
+        draw.text((x1 + 2, top), _fit_text(draw, label, fonts.body, x2 - x1 - 4), fill="#334155", font=fonts.body)
+        draw.rounded_rectangle((x1 + 2, top + 28, x2 - 18 - index * 13, top + 36), radius=4, fill="#E5EAF1")
+    if screen.primary_actions and y2 - 40 > content_top:
+        _draw_action(draw, (x1, y2 - 40, x2, y2), fonts, screen.primary_actions[0])
+
+
+def _draw_form(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    mobile: bool,
+) -> None:
+    x1, y1, x2, y2 = box
+    labels = _screen_labels(screen)
+    step_width = (x2 - x1 - 12) // 3
+    for index in range(3):
+        left = x1 + index * (step_width + 6)
+        draw.rounded_rectangle((left, y1, left + step_width, y1 + 8), radius=4, fill="#2563EB" if index == 0 else "#DCE3ED")
+    top = y1 + 28
+    field_height = 62 if mobile else 70
+    for index, label in enumerate(labels[:6] or [""] * 4):
+        field_top = top + index * field_height
+        if field_top + 50 > y2 - 48:
+            break
+        if label:
+            draw.text((x1, field_top), _fit_text(draw, label, fonts.small, x2 - x1), fill="#475569", font=fonts.small)
+        draw.rounded_rectangle((x1, field_top + 23, x2, field_top + 50), radius=7, fill="#FFFFFF", outline="#CDD6E3")
+    if screen.primary_actions:
+        _draw_action(draw, (x1, y2 - 40, x2, y2), fonts, screen.primary_actions[0])
+
+
+def _draw_landing(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    mobile: bool,
+) -> None:
+    x1, y1, x2, y2 = box
+    labels = _screen_labels(screen)
+    hero_bottom = y1 + (210 if mobile else 260)
+    draw.rounded_rectangle((x1, y1, x2, hero_bottom), radius=14, fill="#E8F0FF")
+    if labels:
+        draw.text((x1 + 18, y1 + 24), _fit_text(draw, labels[0], fonts.heading, x2 - x1 - 36), fill="#1E3A5F", font=fonts.heading)
+    for index, ratio in enumerate((0.72, 0.54)):
+        draw.rounded_rectangle((x1 + 18, y1 + 65 + index * 22, x1 + 18 + int((x2 - x1 - 36) * ratio), y1 + 76 + index * 22), radius=5, fill="#BFD2F2")
+    if screen.primary_actions:
+        _draw_action(draw, (x1 + 18, hero_bottom - 56, min(x2 - 18, x1 + 190), hero_bottom - 18), fonts, screen.primary_actions[0])
+    feature_top = hero_bottom + 14
+    columns = 1 if mobile else 3
+    gap = 10
+    width = (x2 - x1 - gap * (columns - 1)) // columns
+    for index, label in enumerate(labels[1:1 + columns] or [""] * columns):
+        left = x1 + index * (width + gap)
+        bottom = min(y2, feature_top + 130)
+        draw.rounded_rectangle((left, feature_top, left + width, bottom), radius=10, fill="#FFFFFF", outline="#DDE4EE")
+        draw.ellipse((left + 14, feature_top + 14, left + 40, feature_top + 40), fill="#D7E5FF")
+        if label:
+            draw.text((left + 14, feature_top + 55), _fit_text(draw, label, fonts.small, width - 28), fill="#475569", font=fonts.small)
+
+
+def _draw_ecommerce(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    mobile: bool,
+) -> None:
+    x1, y1, x2, y2 = box
+    labels = _screen_labels(screen)
+    _draw_search(draw, (x1, y1, x2, y1 + 42), fonts, labels[0] if labels else "상품 검색")
+    columns = 2 if mobile else 3
+    gap = 9 if mobile else 12
+    grid_top = y1 + 55
+    card_width = (x2 - x1 - gap * (columns - 1)) // columns
+    card_height = 150 if mobile else 178
+    for index in range(min(6, max(len(labels) - 1, 4))):
+        row, column = divmod(index, columns)
+        left = x1 + column * (card_width + gap)
+        top = grid_top + row * (card_height + gap)
+        if top + card_height > y2:
+            break
+        draw.rounded_rectangle((left, top, left + card_width, top + card_height), radius=10, fill="#FFFFFF", outline="#DCE3EC")
+        image_bottom = top + int(card_height * 0.62)
+        draw.rounded_rectangle((left + 8, top + 8, left + card_width - 8, image_bottom), radius=7, fill="#E5EBF3")
+        draw.polygon(((left + 18, image_bottom - 12), (left + card_width // 2, top + 30), (left + card_width - 18, image_bottom - 12)), fill="#C5D2E3")
+        label = labels[index + 1] if index + 1 < len(labels) else ""
+        if label:
+            draw.text((left + 10, image_bottom + 12), _fit_text(draw, label, fonts.small, card_width - 20), fill="#334155", font=fonts.small)
+        draw.rounded_rectangle((left + 10, top + card_height - 22, left + max(40, card_width - 30), top + card_height - 14), radius=4, fill="#DCE8FF")
+
+
+def _draw_booking(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    mobile: bool,
+) -> None:
+    x1, y1, x2, y2 = box
+    labels = _screen_labels(screen)
+    _draw_search(draw, (x1, y1, x2, y1 + 44), fonts, labels[0] if labels else "장소 또는 서비스 검색")
+    selector_top = y1 + 57
+    chip_width = (x2 - x1 - 16) // 3
+    for index in range(3):
+        left = x1 + index * (chip_width + 8)
+        draw.rounded_rectangle((left, selector_top, left + chip_width, selector_top + 52), radius=9, fill="#FFFFFF", outline="#D7E0EC")
+        if index + 1 < len(labels):
+            draw.text((left + 8, selector_top + 17), _fit_text(draw, labels[index + 1], fonts.small, chip_width - 16), fill="#475569", font=fonts.small)
+    slots_top = selector_top + 66
+    columns = 2 if mobile else 3
+    slot_width = (x2 - x1 - 8 * (columns - 1)) // columns
+    for index in range(6):
+        row, column = divmod(index, columns)
+        left = x1 + column * (slot_width + 8)
+        top = slots_top + row * 49
+        if top + 39 > y2 - 50:
+            break
+        draw.rounded_rectangle((left, top, left + slot_width, top + 39), radius=8, fill="#EFF5FF" if index == 1 else "#FFFFFF", outline="#BFD0E8")
+        label_index = index + 4
+        if label_index < len(labels):
+            draw.text((left + 9, top + 10), _fit_text(draw, labels[label_index], fonts.small, slot_width - 18), fill="#315EC7", font=fonts.small)
+    if screen.primary_actions:
+        _draw_action(draw, (x1, y2 - 40, x2, y2), fonts, screen.primary_actions[0])
+
+
+def _draw_map(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    mobile: bool,
+) -> None:
+    x1, y1, x2, y2 = box
+    labels = _screen_labels(screen)
+    map_bottom = y1 + int((y2 - y1) * (0.62 if mobile else 0.72))
+    draw.rounded_rectangle((x1, y1, x2, map_bottom), radius=12, fill="#DCE7DD")
+    for offset in (0.2, 0.45, 0.7):
+        px = x1 + int((x2 - x1) * offset)
+        draw.line((px, y1 + 8, px - 45, map_bottom - 8), fill="#FFFFFF", width=7)
+    for offset in (0.28, 0.58):
+        py = y1 + int((map_bottom - y1) * offset)
+        draw.line((x1 + 8, py, x2 - 8, py + 35), fill="#FFFFFF", width=7)
+    for index, (rx, ry) in enumerate(((0.28, 0.35), (0.62, 0.48), (0.77, 0.25))):
+        cx = x1 + int((x2 - x1) * rx)
+        cy = y1 + int((map_bottom - y1) * ry)
+        draw.ellipse((cx - 10, cy - 10, cx + 10, cy + 10), fill="#2563EB", outline="#FFFFFF", width=3)
+    card_top = map_bottom + 10
+    for index, label in enumerate(labels[:2]):
+        top = card_top + index * 58
+        if top + 50 > y2:
+            break
+        draw.rounded_rectangle((x1, top, x2, top + 50), radius=9, fill="#FFFFFF", outline="#DDE4EE")
+        draw.text((x1 + 12, top + 14), _fit_text(draw, label, fonts.small, x2 - x1 - 24), fill="#334155", font=fonts.small)
+
+
+def _draw_chat(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    mobile: bool,
+) -> None:
+    x1, y1, x2, y2 = box
+    labels = _screen_labels(screen)
+    bubble_width = int((x2 - x1) * 0.72)
+    top = y1
+    for index in range(5):
+        right_aligned = index % 2 == 1
+        left = x2 - bubble_width if right_aligned else x1
+        height = 54 if index % 3 else 68
+        draw.rounded_rectangle((left, top, left + bubble_width, top + height), radius=13, fill="#DCE8FF" if right_aligned else "#FFFFFF", outline="#D8E0EA")
+        if index < len(labels):
+            draw.text((left + 12, top + 12), _fit_text(draw, labels[index], fonts.small, bubble_width - 24), fill="#334155", font=fonts.small)
+        top += height + 12
+        if top + 65 > y2:
+            break
+    draw.rounded_rectangle((x1, y2 - 44, x2, y2), radius=12, fill="#FFFFFF", outline="#CBD5E1")
+    draw.ellipse((x2 - 36, y2 - 34, x2 - 12, y2 - 10), fill="#2563EB")
+
+
+def _draw_page_content(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    mobile: bool,
+) -> None:
+    renderer = {
+        "DASHBOARD": _draw_dashboard,
+        "LIST": _draw_list_page,
+        "DETAIL": _draw_detail,
+        "FORM": _draw_form,
+        "LANDING": _draw_landing,
+        "ECOMMERCE": _draw_ecommerce,
+        "BOOKING": _draw_booking,
+        "MAP": _draw_map,
+        "CHAT": _draw_chat,
+    }[screen.page_type]
+    renderer(draw, screen, box, fonts, mobile)
+
+
+def _draw_mobile_screen(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+) -> None:
+    x1, y1, x2, y2 = box
+    draw.rounded_rectangle(box, radius=36, fill="#111827")
+    inner = (x1 + 8, y1 + 8, x2 - 8, y2 - 8)
+    draw.rounded_rectangle(inner, radius=30, fill="#F8FAFC")
+    draw.rounded_rectangle((x1 + (x2 - x1) // 2 - 42, y1 + 15, x1 + (x2 - x1) // 2 + 42, y1 + 23), radius=4, fill="#293548")
+    draw.text((x1 + 22, y1 + 40), _fit_text(draw, screen.screen_name, fonts.screen, x2 - x1 - 44), fill="#172033", font=fonts.screen)
+    draw.text((x1 + 22, y1 + 74), _fit_text(draw, screen.purpose, fonts.small, x2 - x1 - 44), fill="#64748B", font=fonts.small)
+
+    content_top = y1 + 108
+    if screen.navigation_type == "TABS":
+        tab_width = max(54, (x2 - x1 - 44) // max(1, min(3, len(screen.navigation))))
+        for index, label in enumerate(screen.navigation[:3]):
+            left = x1 + 20 + index * tab_width
+            draw.text((left, content_top), _fit_text(draw, label, fonts.small, tab_width - 8), fill="#2563EB" if index == 0 else "#64748B", font=fonts.small)
+        draw.line((x1 + 20, content_top + 25, x2 - 20, content_top + 25), fill="#DCE3ED", width=2)
+        content_top += 38
+
+    bottom_navigation = screen.navigation_type == "BOTTOM_NAV"
+    content_bottom = y2 - (76 if bottom_navigation else 24)
+    _draw_page_content(draw, screen, (x1 + 20, content_top, x2 - 20, content_bottom), fonts, True)
+
+    if bottom_navigation:
+        nav_top = y2 - 66
+        draw.rounded_rectangle((x1 + 12, nav_top, x2 - 12, y2 - 10), radius=18, fill="#FFFFFF", outline="#DDE4EE")
+        labels = screen.navigation[:4]
+        width = (x2 - x1 - 32) // max(1, len(labels))
+        for index, label in enumerate(labels):
+            center = x1 + 16 + index * width + width // 2
+            draw.ellipse((center - 5, nav_top + 10, center + 5, nav_top + 20), fill="#2563EB" if index == 0 else "#A1ACBA")
+            fitted = _fit_text(draw, label, fonts.small, width - 6)
+            draw.text((center - _text_width(draw, fitted, fonts.small) // 2, nav_top + 27), fitted, fill="#2563EB" if index == 0 else "#64748B", font=fonts.small)
+
+
+def _draw_web_screen(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+) -> None:
+    x1, y1, x2, y2 = box
+    draw.rounded_rectangle(box, radius=18, fill="#FFFFFF", outline="#CBD5E1", width=2)
+    draw.rounded_rectangle((x1, y1, x2, y1 + 42), radius=18, fill="#EAF0F8")
+    draw.rectangle((x1, y1 + 24, x2, y1 + 42), fill="#EAF0F8")
+    for dot, color in enumerate(("#F87171", "#FBBF24", "#34D399")):
+        cx = x1 + 18 + dot * 18
+        draw.ellipse((cx, y1 + 14, cx + 8, y1 + 22), fill=color)
+
+    header_top = y1 + 42
+    draw.rectangle((x1, header_top, x2, header_top + 66), fill="#FFFFFF")
+    draw.text((x1 + 18, header_top + 10), _fit_text(draw, screen.screen_name, fonts.screen, x2 - x1 - 36), fill="#172033", font=fonts.screen)
+    draw.text((x1 + 19, header_top + 41), _fit_text(draw, screen.purpose, fonts.small, x2 - x1 - 38), fill="#64748B", font=fonts.small)
+
+    content_x1 = x1 + 18
+    content_y1 = header_top + 122
+    content_x2 = x2 - 18
+    content_y2 = y2 - 18
+    if screen.navigation_type == "SIDEBAR":
+        sidebar_width = min(150, max(105, (x2 - x1) // 4))
+        draw.rectangle((x1, header_top + 66, x1 + sidebar_width, y2), fill="#F4F7FB")
+        for index, label in enumerate(screen.navigation[:5]):
+            top = header_top + 86 + index * 42
+            if index == 0:
+                draw.rounded_rectangle((x1 + 10, top - 7, x1 + sidebar_width - 10, top + 25), radius=7, fill="#DDE9FF")
+            draw.text((x1 + 18, top), _fit_text(draw, label, fonts.small, sidebar_width - 36), fill="#2458B5" if index == 0 else "#64748B", font=fonts.small)
+        content_x1 = x1 + sidebar_width + 18
+        content_y1 = header_top + 84
+    elif screen.navigation_type in {"TOP_NAV", "TABS"}:
+        nav_top = header_top + 66
+        draw.rectangle((x1, nav_top, x2, nav_top + 43), fill="#F8FAFC")
+        cursor = x1 + 18
+        for index, label in enumerate(screen.navigation[:5]):
+            fitted = _fit_text(draw, label, fonts.small, 90)
+            draw.text((cursor, nav_top + 12), fitted, fill="#2563EB" if index == 0 else "#64748B", font=fonts.small)
+            cursor += min(112, _text_width(draw, fitted, fonts.small) + 28)
+        content_y1 = nav_top + 58
+    else:
+        content_y1 = header_top + 84
+
+    _draw_page_content(draw, screen, (content_x1, content_y1, content_x2, content_y2), fonts, False)
+
+
 def render_ui_mockup(spec: UiMockupSpec) -> RenderedUiMockup:
     fonts = _load_fonts()
-    image = Image.new("RGB", (BOARD_WIDTH, BOARD_HEIGHT), "#F4F7FB")
+    image = Image.new("RGB", (BOARD_WIDTH, BOARD_HEIGHT), "#F3F6FA")
     draw = ImageDraw.Draw(image)
-    draw.text((60, 34), _fit_text(draw, spec.project_title, fonts.title, 1220), fill="#111827", font=fonts.title)
-    draw.text((62, 88), _fit_text(draw, spec.design_summary, fonts.body, 1500), fill="#64748B", font=fonts.body)
+    draw.text((60, 32), _fit_text(draw, spec.project_title, fonts.title, 1250), fill="#111827", font=fonts.title)
+    draw.text((62, 86), _fit_text(draw, spec.design_summary, fonts.body, 1450), fill="#64748B", font=fonts.body)
+    badge_width = 104
+    draw.rounded_rectangle((BOARD_WIDTH - 60 - badge_width, 42, BOARD_WIDTH - 60, 78), radius=18, fill="#DDE9FF")
+    platform_label = "모바일" if spec.platform == "MOBILE" else "웹"
+    draw.text((BOARD_WIDTH - 60 - badge_width + 25, 51), platform_label, fill="#2458B5", font=fonts.body)
 
     screen_count = len(spec.screens)
-    gap = 28
-    margin = 56
     top = 135
     bottom = 1025
-    screen_width = (BOARD_WIDTH - margin * 2 - gap * (screen_count - 1)) // screen_count
-    for index, screen in enumerate(spec.screens):
-        x1 = margin + index * (screen_width + gap)
-        x2 = x1 + screen_width
-        draw.rounded_rectangle((x1, top, x2, bottom), radius=18, fill="#FFFFFF", outline="#CBD5E1", width=2)
-        draw.rounded_rectangle((x1, top, x2, top + 44), radius=18, fill="#EAF0FF")
-        draw.rectangle((x1, top + 25, x2, top + 44), fill="#EAF0FF")
-        for dot, color in enumerate(("#F87171", "#FBBF24", "#34D399")):
-            cx = x1 + 20 + dot * 20
-            draw.ellipse((cx, top + 15, cx + 9, top + 24), fill=color)
-        draw.text((x1 + 18, top + 58), _fit_text(draw, screen.screen_name, fonts.screen, screen_width - 36), fill="#172033", font=fonts.screen)
-        draw.text((x1 + 18, top + 94), _fit_text(draw, screen.purpose, fonts.small, screen_width - 36), fill="#6B778C", font=fonts.small)
-
-        content_top = top + 128
-        action_height = 46 if screen.primary_actions else 0
-        available = bottom - content_top - action_height - 18
-        section_gap = 10
-        section_height = max(92, (available - section_gap * (len(screen.sections) - 1)) // len(screen.sections))
-        for section_index, section in enumerate(screen.sections):
-            section_top = content_top + section_index * (section_height + section_gap)
-            section_bottom = min(section_top + section_height, bottom - action_height - 14)
-            if section_bottom - section_top < 70:
-                break
-            _draw_component(draw, section, (x1 + 16, section_top, x2 - 16, section_bottom), fonts)
-
-        if screen.primary_actions:
-            cursor = x2 - 18
-            for action in reversed(screen.primary_actions):
-                label = _fit_text(draw, action, fonts.small, min(130, screen_width // 3))
-                width = min(150, _text_width(draw, label, fonts.small) + 28)
-                cursor -= width
-                draw.rounded_rectangle((cursor, bottom - 49, cursor + width, bottom - 17), radius=7, fill="#315EC7")
-                draw.text((cursor + 14, bottom - 42), label, fill="#FFFFFF", font=fonts.small)
-                cursor -= 8
+    if spec.platform == "MOBILE":
+        gap = 54
+        screen_width = min(420, (BOARD_WIDTH - 112 - gap * (screen_count - 1)) // screen_count)
+        total_width = screen_width * screen_count + gap * (screen_count - 1)
+        start = (BOARD_WIDTH - total_width) // 2
+        for index, screen in enumerate(spec.screens):
+            left = start + index * (screen_width + gap)
+            _draw_mobile_screen(draw, screen, (left, top, left + screen_width, bottom), fonts)
+    else:
+        gap = 28
+        margin = 56
+        screen_width = (BOARD_WIDTH - margin * 2 - gap * (screen_count - 1)) // screen_count
+        for index, screen in enumerate(spec.screens):
+            left = margin + index * (screen_width + gap)
+            _draw_web_screen(draw, screen, (left, top, left + screen_width, bottom), fonts)
 
     output = BytesIO()
     try:
