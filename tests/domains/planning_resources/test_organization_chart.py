@@ -5,256 +5,200 @@ import os
 import unittest
 from datetime import datetime, timezone
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from PIL import Image, ImageFont
+from pydantic import ValidationError
 
 from app.domains.planning_resources import organization_chart as chart_module
 from app.domains.planning_resources.organization_chart import (
     OrganizationChartConfigurationError,
     OrganizationChartGenerationRequest,
+    OrganizationChartRenderRequest,
     render_organization_chart,
 )
 from app.domains.planning_resources.schemas import PlanningResourceRequest
 from app.domains.planning_resources.view_builders import build_organization_chart
+from app.domains.planning_resources.view_models import OrganizationView
 from app.main import app
+
+
+GENERATED_AT = datetime(2026, 8, 11, 1, 0, tzinfo=timezone.utc)
 
 
 def planning_payload() -> dict:
     return {
         "project_id": 7,
-        "project_name": "AIVLE 통합 프로젝트",
+        "project_name": "한국어 서비스 프로젝트",
         "wbs_tasks": [
             {
-                "wbs_id": 3,
-                "wbs_name": "백엔드 API 구현",
-                "description": "조직도 API를 구현합니다.",
+                "wbs_id": member_id,
+                "wbs_name": f"업무 {member_id}",
+                "description": f"프로젝트 업무 {member_id}",
                 "start_date": "2026-08-03",
-                "end_date": "2026-08-07",
-            },
-            {
-                "wbs_id": 6,
-                "wbs_name": "프론트 미리보기 구현",
-                "description": "보호된 JPG 미리보기를 구현합니다.",
-                "start_date": "2026-08-10",
                 "end_date": "2026-08-14",
-            },
+            }
+            for member_id in range(1, 9)
         ],
         "project_members": [
-            {
-                "project_member_id": 10,
-                "member_name": "김 프로젝트매니저",
-                "roles": ["PM"],
-                "skills": [],
-                "allocations": [],
-            },
-            {
-                "project_member_id": 11,
-                "member_name": "박 백엔드개발자 매우긴이름 테스트",
-                "roles": ["BACKEND", "TECH_LEAD"],
-                "skills": [],
-                "allocations": [],
-            },
-            {
-                "project_member_id": 12,
-                "member_name": "이 프론트엔드개발자",
-                "roles": ["FRONTEND"],
-                "skills": [],
-                "allocations": [],
-            },
+            member(1, "김민성 (PM001)", ["PM"]),
+            member(2, "김현우 (DEV002)", ["TECH_LEAD", "BACKEND"]),
+            member(3, "이서연 (DEV003)", ["BACKEND"]),
+            member(4, "박지훈 (DEV004)", ["DEVOPS"]),
+            member(5, "최유진 (DEV005)", ["FULLSTACK"]),
+            member(6, "정다은 (DEV006)", ["QA"]),
+            member(7, "한도윤 (DEV007)", ["MOBILE"]),
+            member(8, "송하늘 (DEV008)", []),
         ],
     }
 
 
+def member(member_id: int, name: str, roles: list[str]) -> dict:
+    return {
+        "project_member_id": member_id,
+        "member_name": name,
+        "roles": roles,
+        "skills": [],
+        "allocations": [],
+    }
+
+
+def assignment(wbs_id: int, role: str, member_id: int | None) -> dict:
+    recommendations = []
+    if member_id is not None:
+        recommendations.append(
+            {
+                "project_member_id": member_id,
+                "recommendation_score": 90,
+                "assigned_hours": 8,
+                "remaining_available_hours": 24,
+            }
+        )
+    return {
+        "wbs_id": wbs_id,
+        "required_role_code": role,
+        "required_skills": [],
+        "estimated_person_days": 1,
+        "estimated_hours": 8,
+        "estimated_mm": 0.05,
+        "required_headcount": 1,
+        "recommended_members": recommendations,
+        "recommendation_reason": "fixture assignment",
+    }
+
+
 def recommendation_payload() -> dict:
+    assignments = [
+        assignment(1, "PM", 1),
+        assignment(2, "TECH_LEAD", 2),
+        assignment(3, "BACKEND", 3),
+        assignment(4, "DEVOPS", 4),
+        assignment(5, "FULLSTACK", 5),
+        assignment(6, "QA", 6),
+        assignment(7, "MOBILE", 7),
+        assignment(8, "DOCUMENT_REVIEWER", None),
+    ]
     return {
         "project_id": 7,
         "required_staffing": [
             {
-                "role_code": "BACKEND",
+                "role_code": "DOCUMENT_REVIEWER",
                 "required_headcount": 1,
-                "available_candidate_count": 1,
-                "shortage_count": 0,
-                "estimated_person_days": 2,
-                "estimated_mm": 0.1,
-            },
-            {
-                "role_code": "FRONTEND",
-                "required_headcount": 2,
-                "available_candidate_count": 1,
+                "available_candidate_count": 0,
                 "shortage_count": 1,
-                "estimated_person_days": 2,
-                "estimated_mm": 0.1,
-            },
+                "estimated_person_days": 1,
+                "estimated_mm": 0.05,
+            }
         ],
-        "assignments": [
-            {
-                "wbs_id": 3,
-                "required_role_code": "BACKEND",
-                "required_skills": [],
-                "estimated_person_days": 2,
-                "estimated_hours": 16,
-                "estimated_mm": 0.1,
-                "required_headcount": 1,
-                "recommended_members": [
-                    {
-                        "project_member_id": 11,
-                        "recommendation_score": 95,
-                        "assigned_hours": 16,
-                        "remaining_available_hours": 16,
-                    }
-                ],
-                "recommendation_reason": "Qualified backend member",
-            },
-            {
-                "wbs_id": 6,
-                "required_role_code": "FRONTEND",
-                "required_skills": [],
-                "estimated_person_days": 2,
-                "estimated_hours": 16,
-                "estimated_mm": 0.1,
-                "required_headcount": 2,
-                "recommended_members": [
-                    {
-                        "project_member_id": 12,
-                        "recommendation_score": 90,
-                        "assigned_hours": 12,
-                        "remaining_available_hours": 0,
-                    }
-                ],
-                "recommendation_reason": "Partially staffed frontend work",
-            },
-        ],
-        "total_estimated_person_days": 4,
-        "total_estimated_hours": 32,
-        "total_estimated_mm": 0.2,
-        "unassigned_wbs_ids": [6],
-        "warnings": ["Frontend capacity is short"],
+        "assignments": assignments,
+        "total_estimated_person_days": 8,
+        "total_estimated_hours": 64,
+        "total_estimated_mm": 0.4,
+        "unassigned_wbs_ids": [8],
+        "warnings": ["역량 정보가 없어 자동 배정에서 제외된 팀원이 1명 있습니다."],
         "llm_status": "SUCCEEDED",
     }
 
 
 def metadata_payload() -> dict:
     return {
-        "project_manager_member_id": 10,
-        "teams": [
-            {
-                "role_code": "BACKEND",
-                "team_name": "플랫폼 백엔드 팀",
-                "leader_member_id": 11,
-                "collaborates_with_role_codes": ["FRONTEND"],
-            },
-            {
-                "role_code": "FRONTEND",
-                "team_name": "사용자 경험 프론트엔드 팀",
-                "leader_member_id": 12,
-                "reports_to_role_code": "BACKEND",
-            },
-        ],
-    }
-
-
-def eight_member_planning_payload() -> dict:
-    member_roles = [
-        ["PM", "BACKEND"],
-        ["BACKEND", "DEVOPS"],
-        ["BACKEND"],
-        ["FRONTEND", "QA"],
-        ["FULLSTACK", "PLANNER"],
-        ["AI_DATA", "REQUIREMENT_ANALYST"],
-        ["FRONTEND"],
-        ["DEVOPS", "QA"],
-    ]
-    return {
-        "project_id": 88,
-        "project_name": "8명 소규모 프로젝트",
-        "wbs_tasks": [
-            {
-                "wbs_id": wbs_id,
-                "wbs_name": f"WBS 작업 {wbs_id}",
-                "description": f"소규모 프로젝트 작업 {wbs_id}",
-                "start_date": "2026-08-10",
-                "end_date": "2026-08-14",
-            }
-            for wbs_id in range(1, 10)
-        ],
-        "project_members": [
-            {
-                "project_member_id": member_id,
-                "member_name": f"프로젝트 멤버 {member_id}",
-                "roles": roles,
-                "skills": [],
-                "allocations": [],
-            }
-            for member_id, roles in enumerate(member_roles, start=101)
-        ],
-    }
-
-
-def _eight_member_assignment(
-    wbs_id: int,
-    role_code: str,
-    member_ids: list[int],
-) -> dict:
-    return {
-        "wbs_id": wbs_id,
-        "required_role_code": role_code,
-        "required_skills": [],
-        "estimated_person_days": 1,
-        "estimated_hours": 8,
-        "estimated_mm": 0.05,
-        "required_headcount": 1,
-        "recommended_members": [
-            {
-                "project_member_id": member_id,
-                "recommendation_score": 90,
-                "assigned_hours": 8,
-                "remaining_available_hours": 8,
-            }
-            for member_id in member_ids
-        ],
-        "recommendation_reason": "Representative small-team assignment",
-    }
-
-
-def eight_member_recommendation_payload() -> dict:
-    assignments = [
-        _eight_member_assignment(1, "BACKEND", [101]),
-        _eight_member_assignment(2, "PM", [101]),
-        _eight_member_assignment(3, "DEVOPS", [102]),
-        _eight_member_assignment(4, "BACKEND", [103]),
-        _eight_member_assignment(5, "FRONTEND", [104]),
-        _eight_member_assignment(6, "QA", [104]),
-        _eight_member_assignment(7, "FULLSTACK", [105]),
-        _eight_member_assignment(8, "AI_DATA", [106]),
-        _eight_member_assignment(9, "QA", []),
-    ]
-    return {
-        "project_id": 88,
-        "required_staffing": [
-            {
-                "role_code": "QA",
-                "required_headcount": 12,
-                "available_candidate_count": 1,
-                "shortage_count": 11,
-                "estimated_person_days": 11,
-                "estimated_mm": 0.5,
-            }
-        ],
-        "assignments": assignments,
-        "total_estimated_person_days": 9,
-        "total_estimated_hours": 72,
-        "total_estimated_mm": 0.45,
-        "unassigned_wbs_ids": [9],
-        "warnings": ["QA capacity needs review"],
-        "llm_status": "SUCCEEDED",
+        "project_manager_member_id": 1,
+        "teams": [],
     }
 
 
 def default_fonts() -> chart_module._Fonts:
-    font = ImageFont.load_default()
-    return chart_module._Fonts(font, font, font, font)
+    font_path = next(
+        path
+        for path in (
+            Path("C:/Windows/Fonts/malgun.ttf"),
+            *(Path(candidate) for candidate in chart_module._FONT_CANDIDATES),
+        )
+        if path.is_file()
+    )
+    return chart_module._Fonts(
+        ImageFont.truetype(str(font_path), 34),
+        ImageFont.truetype(str(font_path), 24),
+        ImageFont.truetype(str(font_path), 20),
+        ImageFont.truetype(str(font_path), 16),
+    )
+
+
+def build_view() -> tuple[PlanningResourceRequest, OrganizationView]:
+    request = PlanningResourceRequest.model_validate(planning_payload())
+    view = build_organization_chart(
+        request,
+        recommendation_payload(),
+        metadata=metadata_payload(),
+        generated_at=GENERATED_AT,
+    )
+    return request, view
+
+
+def build_hierarchy_fixture_view() -> tuple[PlanningResourceRequest, OrganizationView]:
+    payload = planning_payload()
+    payload["project_members"][-1]["roles"] = ["FRONTEND"]
+    response = recommendation_payload()
+    response["assignments"][-1] = assignment(8, "FRONTEND", 8)
+    response["required_staffing"] = []
+    response["unassigned_wbs_ids"] = []
+    response["warnings"] = []
+    request = PlanningResourceRequest.model_validate(payload)
+    view = build_organization_chart(
+        request,
+        response,
+        metadata=metadata_payload(),
+        generated_at=GENERATED_AT,
+    )
+    return request, view
+
+
+def team_for(view: OrganizationView, member_id: int):
+    return next(team for team in view.teams if team.member_ids == [member_id])
+
+
+def move_member(
+    view: OrganizationView,
+    member_id: int,
+    parent_member_id: int,
+) -> OrganizationView:
+    parent_team = team_for(view, parent_member_id)
+    teams = [
+        team.model_copy(update={"reports_to": parent_team.team_id})
+        if team.member_ids == [member_id]
+        else team
+        for team in view.teams
+    ]
+    return OrganizationView.model_validate(
+        {**view.model_dump(), "teams": [team.model_dump() for team in teams]}
+    )
+
+
+class FailingGraph:
+    def invoke(self, request):
+        raise AssertionError("manual render must not invoke allocation AI")
 
 
 class FakeGraph:
@@ -263,279 +207,229 @@ class FakeGraph:
 
 
 class OrganizationChartTest(unittest.TestCase):
-    def setUp(self):
-        self.request = PlanningResourceRequest.model_validate(planning_payload())
-
-    def build_view(self, metadata: dict | None = None):
-        from datetime import datetime, timezone
-
-        return build_organization_chart(
-            self.request,
-            recommendation_payload(),
-            metadata=metadata,
-            generated_at=datetime(2026, 8, 5, 1, 0, tzinfo=timezone.utc),
-        )
-
-    def test_request_accepts_existing_contract_and_optional_metadata(self):
+    def test_generation_request_accepts_existing_contract(self):
         parsed = OrganizationChartGenerationRequest.model_validate(
             {
                 "planning_request": planning_payload(),
                 "organization_metadata": metadata_payload(),
             }
         )
-
         self.assertEqual(parsed.planning_request.project_id, 7)
-        self.assertEqual(parsed.organization_metadata.project_manager_member_id, 10)
+        self.assertEqual(parsed.organization_metadata.project_manager_member_id, 1)
 
-    def test_render_contains_multiple_teams_members_gaps_and_unassigned_wbs(self):
-        view = self.build_view(metadata_payload())
+    def test_default_hierarchy_uses_pm_root_and_tech_lead(self):
+        _, view = build_hierarchy_fixture_view()
+        pm = team_for(view, 1)
+        lead = team_for(view, 2)
+        backend = team_for(view, 3)
+        devops = team_for(view, 4)
+        fullstack = team_for(view, 5)
+        qa = team_for(view, 6)
+        mobile = team_for(view, 7)
+        frontend = team_for(view, 8)
+
+        self.assertIsNone(pm.reports_to)
+        self.assertEqual(lead.reports_to, pm.team_id)
+        self.assertEqual(backend.reports_to, pm.team_id)
+        self.assertEqual(devops.reports_to, pm.team_id)
+        self.assertEqual(mobile.reports_to, pm.team_id)
+        self.assertEqual(fullstack.reports_to, lead.team_id)
+        self.assertEqual(qa.reports_to, lead.team_id)
+        self.assertEqual(frontend.reports_to, backend.team_id)
+        parents = chart_module._hierarchy_parent_by_team(view)
+        depths = chart_module._hierarchy_depths(parents)
+        self.assertEqual(depths[pm.team_id], 0)
+        self.assertEqual(depths[lead.team_id], 1)
+        self.assertEqual(depths[fullstack.team_id], 2)
+        self.assertEqual(depths[frontend.team_id], 2)
+
+    def test_eight_members_remain_unique_real_and_non_synthetic(self):
+        request, view = build_view()
+        displayed_ids = [
+            member_id for team in view.teams for member_id in team.member_ids
+        ]
+        input_ids = {
+            candidate.project_member_id for candidate in request.project_members
+        }
+
+        self.assertEqual(len(displayed_ids), 8)
+        self.assertEqual(len(set(displayed_ids)), 8)
+        self.assertEqual(set(displayed_ids), input_ids)
+        self.assertTrue(all(len(team.member_ids) == 1 for team in view.teams))
+        self.assertFalse(any(not team.member_ids for team in view.teams))
+
+    def test_missing_capability_member_stays_in_hierarchy_without_role_or_wbs(self):
+        request, view = build_view()
+        unknown = team_for(view, 8)
+
+        self.assertEqual(unknown.primary_roles, [])
+        self.assertEqual(unknown.secondary_roles, [])
+        self.assertEqual(unknown.assigned_wbs_ids, [])
+        self.assertEqual(unknown.reports_to, team_for(view, 1).team_id)
+        labels = [
+            value
+            for _, value in chart_module._team_content(
+                request,
+                unknown,
+                hierarchy_label="김현우 산하",
+            )
+        ]
+        self.assertIn("역량 미등록", labels)
+        self.assertIn("직무 미배정", labels)
 
         with patch.object(chart_module, "_load_fonts", default_fonts):
-            rendered = render_organization_chart(self.request, view)
-
+            rendered = render_organization_chart(request, view)
         self.assertTrue(rendered.content.startswith(b"\xff\xd8\xff"))
-        self.assertGreater(rendered.width, 0)
-        self.assertGreater(rendered.height, 0)
-        self.assertEqual(view.project_manager, 10)
-        self.assertEqual(len(view.teams), 3)
+
+    def test_seven_and_four_of_eight_capabilities_keep_real_members_unassigned(self):
+        for capability_count in (7, 4):
+            with self.subTest(capability_count=capability_count):
+                payload = planning_payload()
+                unknown_ids = {
+                    candidate["project_member_id"]
+                    for candidate in payload["project_members"][capability_count:]
+                }
+                for candidate in payload["project_members"][capability_count:]:
+                    candidate["roles"] = []
+                response = recommendation_payload()
+                for item in response["assignments"]:
+                    item["recommended_members"] = [
+                        candidate
+                        for candidate in item["recommended_members"]
+                        if candidate["project_member_id"] not in unknown_ids
+                    ]
+                response["unassigned_wbs_ids"] = [
+                    item["wbs_id"]
+                    for item in response["assignments"]
+                    if not item["recommended_members"]
+                ]
+                response["warnings"] = [
+                    "역량 정보가 없어 자동 배정에서 제외된 팀원이 "
+                    f"{len(unknown_ids)}명 있습니다."
+                ]
+                request = PlanningResourceRequest.model_validate(payload)
+                view = build_organization_chart(
+                    request,
+                    response,
+                    metadata=metadata_payload(),
+                    generated_at=GENERATED_AT,
+                )
+
+                displayed_ids = [
+                    member_id for team in view.teams for member_id in team.member_ids
+                ]
+                unknown_teams = [
+                    team for team in view.teams if team.member_ids[0] in unknown_ids
+                ]
+                self.assertEqual(len(displayed_ids), 8)
+                self.assertEqual(len(set(displayed_ids)), 8)
+                self.assertEqual(set(displayed_ids), set(range(1, 9)))
+                self.assertEqual(len(unknown_teams), len(unknown_ids))
+                self.assertTrue(
+                    all(
+                        not team.primary_roles
+                        and not team.secondary_roles
+                        and not team.assigned_wbs_ids
+                        for team in unknown_teams
+                    )
+                )
+                with patch.object(chart_module, "_load_fonts", default_fonts):
+                    rendered = render_organization_chart(request, view)
+                self.assertTrue(rendered.content.startswith(b"\xff\xd8\xff"))
+
+    def test_card_hides_wbs_secondary_roles_and_detailed_role_gaps(self):
+        request, view = build_view()
+        lead = team_for(view, 2).model_copy(
+            update={
+                "assigned_wbs_ids": [1, 2, 3, 4],
+                "secondary_roles": ["BACKEND", "QA"],
+            }
+        )
+        labels = [
+            value
+            for _, value in chart_module._team_content(
+                request,
+                lead,
+                hierarchy_label="PM 직속",
+            )
+        ]
+        footer = chart_module._assignment_footer(view)
+
+        self.assertFalse(any("WBS" in label for label in labels))
+        self.assertFalse(any("BACKEND" in label for label in labels))
+        self.assertFalse(any("QA" in label for label in labels))
         self.assertEqual(
-            [member_id for team in view.teams for member_id in team.member_ids],
-            [10, 11, 12],
+            footer,
+            "배정 요약 · 미배정 WBS 1건 · 역할 Gap 1개",
         )
-        self.assertEqual(view.teams[1].multi_role_members, [])
-        self.assertEqual(view.role_gaps[0].role_code, "FRONTEND")
-        self.assertEqual(view.role_gaps[0].wbs_ids, [6])
-        self.assertEqual(view.unassigned_wbs_ids, [6])
-        with Image.open(BytesIO(rendered.content)) as image:
-            self.assertEqual(image.format, "JPEG")
-            self.assertEqual(image.size, (rendered.width, rendered.height))
+        self.assertNotIn("DOCUMENT_REVIEWER", footer)
 
-    def test_render_content_summarizes_dense_wbs_and_warnings(self):
-        view = self.build_view(metadata_payload())
-        dense_team = view.teams[0].model_copy(
-            update={"assigned_wbs_ids": list(range(1, 9))}
+    def test_manual_move_changes_only_hierarchy(self):
+        request, view = build_hierarchy_fixture_view()
+        before = team_for(view, 8)
+        moved = move_member(view, 8, 2)
+        after = team_for(moved, 8)
+
+        self.assertNotEqual(before.reports_to, after.reports_to)
+        self.assertEqual(before.primary_roles, after.primary_roles)
+        self.assertEqual(before.secondary_roles, after.secondary_roles)
+        self.assertEqual(before.assigned_wbs_ids, after.assigned_wbs_ids)
+        self.assertEqual(after.reports_to, team_for(moved, 2).team_id)
+
+        with patch.object(chart_module, "_load_fonts", default_fonts):
+            rendered = render_organization_chart(request, moved)
+        self.assertTrue(rendered.content.startswith(b"\xff\xd8\xff"))
+
+    def test_flat_two_depth_three_depth_and_moved_views_render_safely(self):
+        request, view = build_hierarchy_fixture_view()
+        pm = team_for(view, 1)
+        flat = OrganizationView.model_validate(
+            {
+                **view.model_dump(),
+                "teams": [
+                    team.model_copy(
+                        update={
+                            "reports_to": None
+                            if team.member_ids == [1]
+                            else pm.team_id
+                        }
+                    ).model_dump()
+                    for team in view.teams
+                ],
+            }
         )
+        moved = move_member(view, 8, 2)
 
-        content = chart_module._team_content(self.request, dense_team)
-        labels = [value for _, value in content]
-        warning_lines = chart_module._warning_summary(
-            view.model_copy(update={"unassigned_wbs_ids": list(range(1, 27))})
-        )
+        with patch.object(chart_module, "_load_fonts", default_fonts):
+            rendered = [
+                render_organization_chart(request, candidate)
+                for candidate in (flat, view, moved)
+            ]
+        for image in rendered:
+            self.assertLessEqual(image.width, chart_module.MAX_IMAGE_WIDTH)
+            self.assertLessEqual(image.height, chart_module.MAX_IMAGE_HEIGHT)
+            with Image.open(BytesIO(image.content)) as opened:
+                self.assertEqual(opened.format, "JPEG")
 
-        self.assertIn("담당 WBS  8건", labels)
-        self.assertIn("+ 5건", labels)
-        wbs_start = labels.index("담당 WBS  8건") + 1
-        self.assertEqual(
-            sum(label.startswith("• ") for label in labels[wbs_start:wbs_start + 4]),
-            3,
-        )
-        self.assertIn("미배정 WBS: 26건", warning_lines)
-        self.assertNotIn("26,", " ".join(warning_lines))
-        self.assertIn("FRONTEND 역할 추가 인력 권장", warning_lines[1])
-        self.assertNotIn("1명 부족", " ".join(warning_lines))
-
-    def test_render_supports_missing_pm_and_long_names_without_overflow(self):
-        payload = planning_payload()
-        for index in range(13, 40):
-            payload["project_members"].append(
+    def test_cycle_and_project_manager_parent_are_rejected(self):
+        _, view = build_view()
+        pm = team_for(view, 1)
+        lead = team_for(view, 2)
+        cycle_teams = [
+            team.model_copy(update={"reports_to": lead.team_id})
+            if team is pm
+            else team.model_copy(update={"reports_to": pm.team_id})
+            if team is lead
+            else team
+            for team in view.teams
+        ]
+        with self.assertRaises(ValidationError):
+            OrganizationView.model_validate(
                 {
-                    "project_member_id": index,
-                    "member_name": "매우 긴 조직도 팀원 이름 " * 4 + str(index),
-                    "roles": ["BACKEND"],
-                    "skills": [],
-                    "allocations": [],
+                    **view.model_dump(),
+                    "teams": [team.model_dump() for team in cycle_teams],
                 }
             )
-        request = PlanningResourceRequest.model_validate(payload)
-        response = recommendation_payload()
-        response["assignments"][0]["recommended_members"].extend(
-            {
-                "project_member_id": index,
-                "recommendation_score": 80,
-                "assigned_hours": 1,
-                "remaining_available_hours": 1,
-            }
-            for index in range(13, 40)
-        )
-        from datetime import datetime, timezone
-
-        view = build_organization_chart(
-            request,
-            response,
-            generated_at=datetime(2026, 8, 5, 1, 0, tzinfo=timezone.utc),
-        )
-
-        with patch.object(chart_module, "_load_fonts", default_fonts):
-            rendered = render_organization_chart(request, view)
-
-        self.assertEqual(view.project_manager, 10)
-        self.assertLessEqual(rendered.width, chart_module.MAX_IMAGE_WIDTH)
-        self.assertLessEqual(rendered.height, chart_module.MAX_IMAGE_HEIGHT)
-
-    def test_eight_member_chart_uses_only_real_people_and_renders_jpeg(self):
-        request = PlanningResourceRequest.model_validate(
-            eight_member_planning_payload()
-        )
-        view = build_organization_chart(
-            request,
-            eight_member_recommendation_payload(),
-            generated_at=datetime(2026, 8, 10, 1, 0, tzinfo=timezone.utc),
-        )
-
-        displayed_member_ids = [
-            member_id
-            for team in view.teams
-            for member_id in team.member_ids
-        ]
-        input_member_ids = {
-            member.project_member_id for member in request.project_members
-        }
-        multi_role_teams = [
-            team for team in view.teams if team.secondary_roles
-        ]
-        warning_text = " ".join(chart_module._warning_summary(view))
-
-        self.assertEqual(len(input_member_ids), 8)
-        self.assertEqual(len(displayed_member_ids), 8)
-        self.assertEqual(len(set(displayed_member_ids)), 8)
-        self.assertTrue(set(displayed_member_ids).issubset(input_member_ids))
-        self.assertTrue(all(len(team.member_ids) == 1 for team in view.teams))
-        self.assertEqual(len(multi_role_teams), 2)
-        self.assertEqual(view.unassigned_wbs_ids, [9])
-        self.assertEqual(view.role_gaps[0].wbs_ids, [9])
-        self.assertIn("QA 역할 추가 인력 권장", warning_text)
-        self.assertIn("미배정 관련 WBS 1건", warning_text)
-        self.assertNotIn("11명 부족", warning_text)
-
-        with patch.object(chart_module, "_load_fonts", default_fonts):
-            rendered = render_organization_chart(request, view)
-
-        self.assertTrue(rendered.content.startswith(b"\xff\xd8\xff"))
-        with Image.open(BytesIO(rendered.content)) as image:
-            self.assertEqual(image.format, "JPEG")
-
-    def test_seven_of_eight_capabilities_keeps_unknown_member_unassigned(self):
-        payload = eight_member_planning_payload()
-        unknown_member_id = payload["project_members"][-1]["project_member_id"]
-        payload["project_members"][-1]["roles"] = []
-        request = PlanningResourceRequest.model_validate(payload)
-        response = eight_member_recommendation_payload()
-        response["warnings"].append(
-            "역량 정보가 없어 자동 배정에서 제외된 팀원이 1명 있습니다."
-        )
-
-        view = build_organization_chart(
-            request,
-            response,
-            generated_at=datetime(2026, 8, 10, 1, 0, tzinfo=timezone.utc),
-        )
-        displayed_member_ids = [
-            member_id for team in view.teams for member_id in team.member_ids
-        ]
-        unknown_team = next(
-            team for team in view.teams if team.member_ids == [unknown_member_id]
-        )
-
-        self.assertEqual(len(displayed_member_ids), 8)
-        self.assertEqual(len(set(displayed_member_ids)), 8)
-        self.assertEqual(
-            set(displayed_member_ids),
-            {
-                member["project_member_id"]
-                for member in payload["project_members"]
-            },
-        )
-        self.assertEqual(unknown_team.primary_roles, [])
-        self.assertEqual(unknown_team.secondary_roles, [])
-        self.assertEqual(unknown_team.assigned_wbs_ids, [])
-        self.assertIn(
-            "역량 정보가 없어 자동 배정에서 제외된 팀원이 1명 있습니다.",
-            view.warnings,
-        )
-        self.assertIn(
-            "상태  역량 미등록",
-            [value for _, value in chart_module._team_content(request, unknown_team)],
-        )
-
-        with patch.object(chart_module, "_load_fonts", default_fonts):
-            rendered = render_organization_chart(request, view)
-        self.assertTrue(rendered.content.startswith(b"\xff\xd8\xff"))
-
-    def test_four_of_eight_capabilities_only_assigns_known_members(self):
-        payload = eight_member_planning_payload()
-        unknown_member_ids = {
-            member["project_member_id"] for member in payload["project_members"][4:]
-        }
-        for member in payload["project_members"][4:]:
-            member["roles"] = []
-        request = PlanningResourceRequest.model_validate(payload)
-        response = eight_member_recommendation_payload()
-        for assignment in response["assignments"]:
-            assignment["recommended_members"] = [
-                member
-                for member in assignment["recommended_members"]
-                if member["project_member_id"] not in unknown_member_ids
-            ]
-        response["unassigned_wbs_ids"] = [7, 8, 9]
-        response["warnings"].append(
-            "역량 정보가 없어 자동 배정에서 제외된 팀원이 4명 있습니다."
-        )
-
-        view = build_organization_chart(
-            request,
-            response,
-            generated_at=datetime(2026, 8, 10, 1, 0, tzinfo=timezone.utc),
-        )
-        displayed_member_ids = [
-            member_id for team in view.teams for member_id in team.member_ids
-        ]
-        unknown_teams = [
-            team for team in view.teams if team.member_ids[0] in unknown_member_ids
-        ]
-
-        self.assertEqual(len(displayed_member_ids), 8)
-        self.assertEqual(len(set(displayed_member_ids)), 8)
-        self.assertEqual(
-            set(displayed_member_ids),
-            {
-                member["project_member_id"]
-                for member in payload["project_members"]
-            },
-        )
-        self.assertEqual(len(unknown_teams), 4)
-        self.assertTrue(
-            all(
-                not team.primary_roles
-                and not team.secondary_roles
-                and not team.assigned_wbs_ids
-                for team in unknown_teams
-            )
-        )
-        self.assertEqual(view.unassigned_wbs_ids, [7, 8, 9])
-        self.assertIn(
-            "역량 정보가 없어 자동 배정에서 제외된 팀원이 4명 있습니다.",
-            chart_module._warning_summary(view),
-        )
-
-        with patch.object(chart_module, "_load_fonts", default_fonts):
-            rendered = render_organization_chart(request, view)
-        self.assertTrue(rendered.content.startswith(b"\xff\xd8\xff"))
-
-    def test_builder_rejects_invalid_pm_leader_relationship_and_cycle(self):
-        invalid = [
-            {"project_manager_member_id": 999},
-            {"teams": [{"role_code": "BACKEND", "leader_member_id": 12}]},
-            {"teams": [{"role_code": "BACKEND", "reports_to_role_code": "QA"}]},
-            {
-                "teams": [
-                    {"role_code": "BACKEND", "reports_to_role_code": "FRONTEND"},
-                    {"role_code": "FRONTEND", "reports_to_role_code": "BACKEND"},
-                ]
-            },
-        ]
-        for metadata in invalid:
-            with self.subTest(metadata=metadata), self.assertRaises(ValueError):
-                self.build_view(metadata)
 
     def test_invalid_configured_font_raises_clear_error(self):
         with patch.dict(os.environ, {"ORG_CHART_FONT_PATH": "missing-font.ttc"}):
@@ -550,7 +444,7 @@ class OrganizationChartRouterTest(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
 
-    def test_endpoint_returns_valid_json_and_jpeg(self):
+    def test_generate_endpoint_returns_structure_and_jpeg(self):
         with (
             patch(
                 "app.domains.planning_resources.router.planning_resource_graph",
@@ -568,32 +462,36 @@ class OrganizationChartRouterTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["content_type"], "image/jpeg")
-        self.assertEqual(body["file_name"], "project-7-organization-chart.jpg")
-        self.assertTrue(base64.b64decode(body["image_base64"]).startswith(b"\xff\xd8\xff"))
-        self.assertGreater(body["width"], 0)
-        self.assertGreater(body["height"], 0)
-        self.assertEqual(body["organization"]["project_id"], 7)
+        self.assertEqual(body["organization"]["project_manager"], 1)
+        self.assertEqual(len(body["organization"]["teams"]), 8)
+        self.assertTrue(
+            base64.b64decode(body["image_base64"]).startswith(b"\xff\xd8\xff")
+        )
 
-    def test_endpoint_maps_font_failure_to_503(self):
+    def test_manual_render_endpoint_does_not_invoke_allocation_ai(self):
+        request, view = build_view()
+        render_request = OrganizationChartRenderRequest(
+            planning_request=request,
+            organization=move_member(view, 8, 3),
+        )
         with (
             patch(
                 "app.domains.planning_resources.router.planning_resource_graph",
-                FakeGraph(),
+                FailingGraph(),
             ),
-            patch.object(
-                chart_module,
-                "_load_fonts",
-                side_effect=OrganizationChartConfigurationError("font missing"),
-            ),
+            patch.object(chart_module, "_load_fonts", default_fonts),
         ):
             response = self.client.post(
-                "/api/v1/planning/resources/organization-chart/generate",
-                json={"planning_request": planning_payload()},
+                "/api/v1/planning/resources/organization-chart/render",
+                json=render_request.model_dump(mode="json"),
             )
 
-        self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.json()["message"], "font missing")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["organization"], render_request.model_dump(mode="json")["organization"])
+        self.assertTrue(
+            base64.b64decode(body["image_base64"]).startswith(b"\xff\xd8\xff")
+        )
 
 
 if __name__ == "__main__":

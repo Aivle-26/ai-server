@@ -49,6 +49,13 @@ class OrganizationChartGenerationRequest(BaseModel):
     organization_metadata: OrganizationMetadata | None = None
 
 
+class OrganizationChartRenderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    planning_request: PlanningResourceRequest
+    organization: OrganizationView
+
+
 class OrganizationChartGenerationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -168,7 +175,7 @@ def _member_label(request: PlanningResourceRequest, member_id: int) -> str:
     )
     if member is None or member.member_name is None:
         return f"ID {member_id}"
-    return f"{member.member_name} (ID {member_id})"
+    return member.member_name
 
 
 def _team_content(
@@ -176,10 +183,9 @@ def _team_content(
     team: OrganizationTeam,
     *,
     section_label: str = "PROJECT MEMBER",
+    hierarchy_label: str,
+    is_project_manager: bool = False,
 ) -> list[tuple[str, str]]:
-    task_names = {
-        task.wbs_id: task.wbs_name for task in request.wbs_tasks
-    }
     member_id = team.member_ids[0]
     member = next(
         (
@@ -194,29 +200,23 @@ def _team_content(
         ("small", section_label),
         ("heading", _member_label(request, member_id)),
     ]
-    if missing_capability:
+    if is_project_manager:
         lines.extend([
-            ("body", "상태  역량 미등록"),
-            ("body", "배정 역할: 없음"),
+            ("body", "PROJECT MANAGER"),
+            ("small", "최상위"),
+        ])
+    elif missing_capability:
+        lines.extend([
+            ("body", "역량 미등록"),
+            ("small", "직무 미배정"),
+            ("small", hierarchy_label),
         ])
     else:
-        primary_role = " · ".join(team.primary_roles) or "역할 미정"
-        lines.append(("body", f"주 역할  {primary_role}"))
-        if team.secondary_roles:
-            lines.append(("body", "겸임  " + " · ".join(team.secondary_roles)))
-
-    if team.assigned_wbs_ids:
-        lines.append(("body", f"담당 WBS  {len(team.assigned_wbs_ids)}건"))
-        visible_wbs_ids = team.assigned_wbs_ids[:MAX_VISIBLE_WBS_ITEMS]
-        for wbs_id in visible_wbs_ids:
-            lines.append(
-                ("small", f"• {task_names.get(wbs_id, f'WBS {wbs_id}')}")
-            )
-        hidden_wbs_count = len(team.assigned_wbs_ids) - len(visible_wbs_ids)
-        if hidden_wbs_count:
-            lines.append(("small", f"+ {hidden_wbs_count}건"))
-    else:
-        lines.append(("body", "담당 WBS: 없음"))
+        primary_role = team.primary_roles[0] if team.primary_roles else "직무 미배정"
+        lines.extend([
+            ("body", primary_role),
+            ("small", hierarchy_label),
+        ])
 
     return lines
 
@@ -244,23 +244,13 @@ def _card_height(fonts: _Fonts, lines: Iterable[tuple[str, str]]) -> int:
     return 42 + sum(_line_height(getattr(fonts, style)) for style, _ in lines) + 26
 
 
-def _warning_summary(organization: OrganizationView) -> tuple[str, ...]:
-    lines = [f"미배정 WBS: {len(organization.unassigned_wbs_ids)}건"]
-    visible_gaps = organization.role_gaps[:MAX_VISIBLE_ROLE_GAPS]
-    for gap in visible_gaps:
-        warning = f"{gap.role_code} 역할 추가 인력 권장"
-        if gap.wbs_ids:
-            warning += f" · 미배정 관련 WBS {len(gap.wbs_ids)}건"
-        lines.append(warning)
-    hidden_gap_count = len(organization.role_gaps) - len(visible_gaps)
-    if hidden_gap_count:
-        lines.append(f"+ {hidden_gap_count}개 역할 추가 검토 필요")
-    lines.extend(
-        warning
-        for warning in organization.warnings
-        if warning.startswith("역량 정보가 없어 자동 배정에서 제외된 팀원이 ")
+def _assignment_footer(organization: OrganizationView) -> str | None:
+    if not organization.unassigned_wbs_ids and not organization.role_gaps:
+        return None
+    return (
+        f"배정 요약 · 미배정 WBS {len(organization.unassigned_wbs_ids)}건"
+        f" · 역할 Gap {len(organization.role_gaps)}개"
     )
-    return tuple(lines)
 
 
 def _validate_render_input(
@@ -302,21 +292,11 @@ def _validate_render_input(
         )
 
 
-def render_organization_chart(
-    request: PlanningResourceRequest,
+def _hierarchy_parent_by_team(
     organization: OrganizationView,
-) -> RenderedOrganizationChart:
-    """Render one validated organization view as a private-transfer JPG."""
-
-    _validate_render_input(request, organization)
-    fonts = _load_fonts()
-    measurement_image = Image.new("RGB", (10, 10), "white")
-    measurement_draw = ImageDraw.Draw(measurement_image)
-
-    card_width = 500
-    card_gap_x = 44
-    card_gap_y = 48
-    page_margin = 56
+) -> dict[str, str | None]:
+    if not organization.teams:
+        return {}
     pm_team = next(
         (
             team
@@ -325,76 +305,241 @@ def render_organization_chart(
         ),
         None,
     )
-    delivery_teams = [
-        team for team in organization.teams if team is not pm_team
-    ]
-    team_count = max(1, len(delivery_teams))
-    columns = min(3, team_count)
-    width = max(
-        1400,
-        page_margin * 2 + columns * card_width + (columns - 1) * card_gap_x,
+    if pm_team is None:
+        raise OrganizationChartRenderError(
+            "organization must contain one project manager root"
+        )
+    if pm_team.reports_to is not None:
+        raise OrganizationChartRenderError(
+            "project manager cannot report to another member"
+        )
+
+    known_team_ids = {team.team_id for team in organization.teams}
+    parents: dict[str, str | None] = {}
+    for team in organization.teams:
+        if team is pm_team:
+            parents[team.team_id] = None
+            continue
+        parent = team.reports_to or pm_team.team_id
+        if parent not in known_team_ids or parent == team.team_id:
+            raise OrganizationChartRenderError(
+                "organization parent must reference another member"
+            )
+        parents[team.team_id] = parent
+
+    for team_id in known_team_ids:
+        path: set[str] = set()
+        current: str | None = team_id
+        while current is not None:
+            if current in path:
+                raise OrganizationChartRenderError(
+                    "organization hierarchy cannot form a cycle"
+                )
+            path.add(current)
+            current = parents[current]
+        if pm_team.team_id not in path:
+            raise OrganizationChartRenderError(
+                "every organization member must report to the project manager"
+            )
+    return parents
+
+
+def _hierarchy_depths(
+    parents: dict[str, str | None],
+) -> dict[str, int]:
+    depths: dict[str, int] = {}
+    for team_id in parents:
+        depth = 0
+        current = team_id
+        while parents[current] is not None:
+            depth += 1
+            current = parents[current]  # type: ignore[assignment]
+        depths[team_id] = depth
+    return depths
+
+
+def render_organization_chart(
+    request: PlanningResourceRequest,
+    organization: OrganizationView,
+) -> RenderedOrganizationChart:
+    """Render a validated member hierarchy without recomputing allocation."""
+
+    _validate_render_input(request, organization)
+    parents = _hierarchy_parent_by_team(organization)
+    depths = _hierarchy_depths(parents)
+    fonts = _load_fonts()
+    measurement_image = Image.new("RGB", (10, 10), "white")
+    measurement_draw = ImageDraw.Draw(measurement_image)
+
+    card_width = 400
+    card_gap_x = 36
+    card_gap_y = 32
+    depth_gap_y = 96
+    page_margin = 56
+    title_bottom = 118
+    tree_top = 154
+    max_columns = max(
+        1,
+        min(
+            12,
+            (MAX_IMAGE_WIDTH - page_margin * 2 + card_gap_x)
+            // (card_width + card_gap_x),
+        ),
     )
-    pm_width = min(640, width - page_margin * 2)
-    pm_lines = (
-        _wrapped_lines(
+    teams_by_id = {team.team_id: team for team in organization.teams}
+    pm_team = next(
+        team
+        for team in organization.teams
+        if organization.project_manager in team.member_ids
+    )
+    team_index = {
+        team.team_id: index for index, team in enumerate(organization.teams)
+    }
+    children_by_parent: dict[str, list[OrganizationTeam]] = {}
+    for team in organization.teams:
+        parent_id = parents[team.team_id]
+        if parent_id is not None:
+            children_by_parent.setdefault(parent_id, []).append(team)
+    for children in children_by_parent.values():
+        children.sort(key=lambda team: team_index[team.team_id])
+    hierarchy_order: list[OrganizationTeam] = []
+    frontier = [pm_team]
+    while frontier:
+        hierarchy_order.extend(frontier)
+        frontier = [
+            child
+            for parent in frontier
+            for child in children_by_parent.get(parent.team_id, [])
+        ]
+
+    prepared_by_depth: dict[
+        int,
+        list[tuple[OrganizationTeam, tuple[tuple[str, str], ...], int]],
+    ] = {}
+    for team in hierarchy_order:
+        parent_id = parents[team.team_id]
+        parent = teams_by_id.get(parent_id) if parent_id is not None else None
+        parent_label = (
+            parent.primary_roles[0]
+            if parent is not None and parent.primary_roles
+            else parent.team_name
+            if parent is not None
+            else None
+        )
+        hierarchy_label = (
+            "최상위"
+            if team is pm_team
+            else "PM 직속"
+            if parent is pm_team
+            else f"{parent_label} 산하"
+            if parent_label is not None
+            else "PM 직속"
+        )
+        lines = _wrapped_lines(
             measurement_draw,
             fonts,
             _team_content(
                 request,
-                pm_team,
-                section_label="PROJECT MANAGER",
+                team,
+                section_label=(
+                    "PROJECT MANAGER" if team is pm_team else "PROJECT MEMBER"
+                ),
+                hierarchy_label=hierarchy_label,
+                is_project_manager=team is pm_team,
             ),
-            pm_width - 56,
-        )
-        if pm_team is not None
-        else ()
-    )
-
-    prepared: list[tuple[OrganizationTeam, tuple[tuple[str, str], ...], int]] = []
-    for team in delivery_teams:
-        lines = _wrapped_lines(
-            measurement_draw,
-            fonts,
-            _team_content(request, team),
             card_width - 56,
         )
-        prepared.append((team, lines, _card_height(fonts, lines)))
+        prepared_by_depth.setdefault(depths[team.team_id], []).append(
+            (team, lines, _card_height(fonts, lines))
+        )
 
-    title_bottom = 118
-    pm_top = 142
-    pm_height = _card_height(fonts, pm_lines) if pm_lines else 0
-    teams_top = (
-        pm_top + pm_height + 92
-        if pm_lines
-        else title_bottom + 72
-    )
-    row_heights: list[int] = []
-    for index in range(0, len(prepared), columns):
-        row_heights.append(max(height for _, _, height in prepared[index:index + columns]))
-    teams_height = sum(row_heights) + max(0, len(row_heights) - 1) * card_gap_y
-    has_missing_capability_warning = any(
-        warning.startswith("역량 정보가 없어 자동 배정에서 제외된 팀원이 ")
-        for warning in organization.warnings
-    )
-    warnings = bool(
-        organization.role_gaps
-        or organization.unassigned_wbs_ids
-        or has_missing_capability_warning
-    )
-    warning_lines = _warning_summary(organization) if warnings else ()
-    warnings_height = 86 + len(warning_lines) * 34 if warnings else 0
-    content_bottom = (
-        teams_top + teams_height
-        if delivery_teams
-        else (pm_top + pm_height if pm_lines else teams_top + 100)
-    )
-    warning_top = content_bottom + 44
-    height = (
-        warning_top + warnings_height + page_margin
-        if warnings
-        else content_bottom + page_margin
-    )
+    layouts: list[_CardLayout] = []
+    center_slot_by_team: dict[str, float] = {}
 
+    def assign_subtree_slots(team: OrganizationTeam, start: int) -> int:
+        children = children_by_parent.get(team.team_id, [])
+        if not children:
+            center_slot_by_team[team.team_id] = float(start)
+            return 1
+        cursor = start
+        for child in children:
+            cursor += assign_subtree_slots(child, cursor)
+        center_slot_by_team[team.team_id] = (
+            center_slot_by_team[children[0].team_id]
+            + center_slot_by_team[children[-1].team_id]
+        ) / 2
+        return cursor - start
+
+    leaf_slots = assign_subtree_slots(pm_team, 0)
+    if leaf_slots <= max_columns:
+        tree_width = (
+            leaf_slots * card_width
+            + max(0, leaf_slots - 1) * card_gap_x
+        )
+        width = max(1400, page_margin * 2 + tree_width)
+        tree_x = (width - tree_width) // 2
+        depth_y = tree_top
+        for depth in sorted(prepared_by_depth):
+            depth_items = prepared_by_depth[depth]
+            row_height = max(item[2] for item in depth_items)
+            for team, lines, card_height in depth_items:
+                layouts.append(
+                    _CardLayout(
+                        team=team,
+                        x=tree_x + round(
+                            center_slot_by_team[team.team_id]
+                            * (card_width + card_gap_x)
+                        ),
+                        y=depth_y,
+                        width=card_width,
+                        height=card_height,
+                        lines=lines,
+                    )
+                )
+            depth_y += row_height + depth_gap_y
+    else:
+        widest_row = max(
+            min(max_columns, len(items))
+            for items in prepared_by_depth.values()
+        )
+        width = max(
+            1400,
+            page_margin * 2
+            + widest_row * card_width
+            + max(0, widest_row - 1) * card_gap_x,
+        )
+        depth_y = tree_top
+        for depth in sorted(prepared_by_depth):
+            depth_items = prepared_by_depth[depth]
+            for start in range(0, len(depth_items), max_columns):
+                row_items = depth_items[start:start + max_columns]
+                row_height = max(item[2] for item in row_items)
+                row_width = (
+                    len(row_items) * card_width
+                    + max(0, len(row_items) - 1) * card_gap_x
+                )
+                row_x = (width - row_width) // 2
+                for column, (team, lines, card_height) in enumerate(row_items):
+                    layouts.append(
+                        _CardLayout(
+                            team=team,
+                            x=row_x + column * (card_width + card_gap_x),
+                            y=depth_y,
+                            width=card_width,
+                            height=card_height,
+                            lines=lines,
+                        )
+                    )
+                depth_y += row_height + card_gap_y
+            depth_y += depth_gap_y - card_gap_y
+
+    footer = _assignment_footer(organization)
+    content_bottom = max(
+        (layout.y + layout.height for layout in layouts),
+        default=tree_top,
+    )
+    footer_top = content_bottom + 44
+    height = footer_top + (54 if footer else 0) + page_margin
     if (
         width > MAX_IMAGE_WIDTH
         or height > MAX_IMAGE_HEIGHT
@@ -410,103 +555,73 @@ def render_organization_chart(
     muted = "#667085"
     primary = "#2563eb"
     border = "#cbd5e1"
-    pale = "#eff6ff"
 
     project_label = request.project_name or f"프로젝트 {request.project_id}"
     draw.text((page_margin, 36), project_label, fill=dark, font=fonts.title)
-    generated_label = organization.generated_at.isoformat()
     draw.text(
         (page_margin, title_bottom - 22),
-        f"PROJECT ORGANIZATION  ·  {generated_label}",
+        f"PROJECT ORGANIZATION  ·  {organization.generated_at.isoformat()}",
         fill=muted,
         font=fonts.small,
     )
 
-    if pm_lines:
-        pm_left = (width - pm_width) // 2
-        draw.rounded_rectangle(
-            (pm_left, pm_top, pm_left + pm_width, pm_top + pm_height),
-            radius=14,
-            fill=primary,
+    layouts_by_team = {layout.team.team_id: layout for layout in layouts}
+    parent_groups_by_depth: dict[int, list[tuple[_CardLayout, list[_CardLayout]]]] = {}
+    for parent_id, children in children_by_parent.items():
+        child_layouts = [layouts_by_team[child.team_id] for child in children]
+        child_depth = depths[children[0].team_id]
+        parent_groups_by_depth.setdefault(child_depth, []).append(
+            (layouts_by_team[parent_id], child_layouts)
         )
-        pm_text_y = pm_top + 24
-        for style, line in pm_lines:
-            font = getattr(fonts, style)
-            draw.text(
-                (pm_left + 28, pm_text_y),
-                line,
-                fill="white",
-                font=font,
+    for child_depth in sorted(parent_groups_by_depth):
+        groups = sorted(
+            parent_groups_by_depth[child_depth],
+            key=lambda item: item[0].x,
+        )
+        parent_bottom = max(parent.y + parent.height for parent, _ in groups)
+        child_top = min(child.y for _, children in groups for child in children)
+        connector_gap = child_top - parent_bottom
+        for index, (parent, children) in enumerate(groups):
+            connector_y = parent_bottom + max(
+                16,
+                connector_gap * (index + 1) // (len(groups) + 1),
             )
-            pm_text_y += _line_height(font)
-
-    layouts: list[_CardLayout] = []
-    row_y = teams_top
-    item_index = 0
-    for row_height in row_heights:
-        row_items = prepared[item_index:item_index + columns]
-        row_width = len(row_items) * card_width + max(0, len(row_items) - 1) * card_gap_x
-        row_x = (width - row_width) // 2
-        for column, (team, lines, card_height) in enumerate(row_items):
-            layouts.append(
-                _CardLayout(
-                    team=team,
-                    x=row_x + column * (card_width + card_gap_x),
-                    y=row_y,
-                    width=card_width,
-                    height=card_height,
-                    lines=lines,
-                )
-            )
-        row_y += row_height + card_gap_y
-        item_index += columns
-
-    if pm_lines:
-        pm_center = (width // 2, pm_top + pm_height)
-        for layout in layouts:
-            team_center = (layout.x + layout.width // 2, layout.y)
-            draw.line(
-                (pm_center[0], pm_center[1], pm_center[0], team_center[1] - 28),
-                fill=border,
-                width=3,
-            )
+            parent_center_x = parent.x + parent.width // 2
+            child_centers = [child.x + child.width // 2 for child in children]
             draw.line(
                 (
-                    pm_center[0],
-                    team_center[1] - 28,
-                    team_center[0],
-                    team_center[1] - 28,
-                ),
-                fill=border,
-                width=3,
-            )
-            draw.line(
-                (
-                    team_center[0],
-                    team_center[1] - 28,
-                    team_center[0],
-                    team_center[1],
-                ),
-                fill=border,
-                width=3,
-            )
-
-    by_team_id = {layout.team.team_id: layout for layout in layouts}
-    for layout in layouts:
-        if layout.team.reports_to and layout.team.reports_to in by_team_id:
-            parent = by_team_id[layout.team.reports_to]
-            draw.line(
-                (
-                    parent.x + parent.width // 2,
+                    parent_center_x,
                     parent.y + parent.height,
-                    layout.x + layout.width // 2,
-                    layout.y,
+                    parent_center_x,
+                    connector_y,
                 ),
-                fill="#475569",
-                width=2,
+                fill=border,
+                width=3,
             )
+            draw.line(
+                (
+                    min([parent_center_x, *child_centers]),
+                    connector_y,
+                    max([parent_center_x, *child_centers]),
+                    connector_y,
+                ),
+                fill=border,
+                width=3,
+            )
+            for child, child_center_x in zip(children, child_centers, strict=True):
+                draw.line(
+                    (
+                        child_center_x,
+                        connector_y,
+                        child_center_x,
+                        child.y,
+                    ),
+                    fill=border,
+                    width=3,
+                )
 
     for layout in layouts:
+        is_pm = layout.team is pm_team
         draw.rounded_rectangle(
             (
                 layout.x,
@@ -515,55 +630,37 @@ def render_organization_chart(
                 layout.y + layout.height,
             ),
             radius=12,
-            fill="white",
-            outline=border,
+            fill=primary if is_pm else "white",
+            outline=primary if is_pm else border,
             width=2,
         )
         cursor_y = layout.y + 24
         for style, line in layout.lines:
             font = getattr(fonts, style)
-            color = primary if style == "heading" else dark if style == "body" else muted
+            color = (
+                "white"
+                if is_pm
+                else primary
+                if style == "heading"
+                else dark
+                if style == "body"
+                else muted
+            )
             draw.text((layout.x + 28, cursor_y), line, fill=color, font=font)
             cursor_y += _line_height(font)
 
-    if not organization.teams:
-        draw.rounded_rectangle(
-            (page_margin, teams_top, width - page_margin, teams_top + 90),
-            radius=12,
-            fill=pale,
-            outline=border,
-        )
-        draw.text(
-            (page_margin + 24, teams_top + 28),
-            "표시할 프로젝트 멤버가 없습니다.",
-            fill=dark,
-            font=fonts.body,
-        )
-
-    if warnings:
-        draw.rounded_rectangle(
-            (page_margin, warning_top, width - page_margin, warning_top + warnings_height),
-            radius=12,
-            fill="#f8fafc",
-            outline=border,
+    if footer:
+        draw.line(
+            (page_margin, footer_top, width - page_margin, footer_top),
+            fill=border,
             width=2,
         )
         draw.text(
-            (page_margin + 28, warning_top + 20),
-            "배정 현황",
-            fill=dark,
-            font=fonts.heading,
+            (page_margin, footer_top + 20),
+            footer,
+            fill=muted,
+            font=fonts.small,
         )
-        warning_y = warning_top + 66
-        for index, line in enumerate(warning_lines):
-            color = dark if index < 2 else muted
-            draw.text(
-                (page_margin + 28, warning_y),
-                line,
-                fill=color,
-                font=fonts.body if index < 2 else fonts.small,
-            )
-            warning_y += 34
 
     output = BytesIO()
     image.save(output, format="JPEG", quality=JPEG_QUALITY, optimize=True)

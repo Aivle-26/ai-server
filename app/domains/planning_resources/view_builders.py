@@ -353,15 +353,41 @@ def build_organization_chart(
         context.members,
         organization_metadata,
     )
+    primary_role_by_member_id = {
+        member.project_member_id: _primary_role(
+            member,
+            roles_by_member_id[member.project_member_id],
+            is_project_manager=member.project_member_id == project_manager,
+        )
+        for member in context.members
+    }
+    lead_member_id = next(
+        (
+            member.project_member_id
+            for member in context.members
+            if member.project_member_id != project_manager
+            and any(
+                role in {"TECH_LEAD", "TEAM_LEAD", "DELIVERY_LEAD"}
+                for role in member.roles
+            )
+        ),
+        None,
+    )
+    backend_member_id = next(
+        (
+            member.project_member_id
+            for member in context.members
+            if member.project_member_id not in {project_manager, lead_member_id}
+            and primary_role_by_member_id[member.project_member_id]
+            in {"BACKEND", "BACKEND_DEVELOPER"}
+        ),
+        None,
+    )
     teams: list[OrganizationTeam] = []
     for member in context.members:
         member_id = member.project_member_id
         assigned_roles = roles_by_member_id[member_id]
-        primary_role = _primary_role(
-            member,
-            assigned_roles,
-            is_project_manager=member_id == project_manager,
-        )
+        primary_role = primary_role_by_member_id[member_id]
         secondary_roles = [
             role
             for role in _unique_text(assigned_roles)
@@ -400,6 +426,33 @@ def build_organization_chart(
                 for role in team_metadata.collaborates_with_role_codes
                 if role in role_representative
             ]
+
+        if (
+            project_manager is not None
+            and member_id != project_manager
+            and reports_to is None
+        ):
+            parent_member_id = project_manager
+            if (
+                lead_member_id is not None
+                and primary_role in {
+                    "FULLSTACK",
+                    "FULLSTACK_DEVELOPER",
+                    "QA",
+                    "QA_ENGINEER",
+                }
+            ):
+                parent_member_id = lead_member_id
+            elif (
+                backend_member_id is not None
+                and primary_role in {"FRONTEND", "FRONTEND_DEVELOPER"}
+            ):
+                parent_member_id = backend_member_id
+            if parent_member_id is not None:
+                reports_to = _member_team_id(
+                    request.project_id,
+                    parent_member_id,
+                )
 
         team_id = _member_team_id(request.project_id, member_id)
         collaborators = [

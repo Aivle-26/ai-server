@@ -12,6 +12,7 @@ from .organization_chart import (
     OrganizationChartConfigurationError,
     OrganizationChartGenerationRequest,
     OrganizationChartGenerationResponse,
+    OrganizationChartRenderRequest,
     OrganizationChartRenderError,
     render_organization_chart,
 )
@@ -79,6 +80,35 @@ def generate_organization_chart(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ResourceLLMGenerationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except OrganizationChartConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (OrganizationChartRenderError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post(
+    "/organization-chart/render",
+    response_model=OrganizationChartGenerationResponse,
+    summary="Render an existing organization hierarchy as JPG",
+)
+def render_existing_organization_chart(
+    request: OrganizationChartRenderRequest,
+) -> OrganizationChartGenerationResponse:
+    try:
+        rendered = render_organization_chart(
+            request.planning_request,
+            request.organization,
+        )
+        return OrganizationChartGenerationResponse(
+            organization=request.organization,
+            file_name=(
+                f"project-{request.planning_request.project_id}"
+                "-organization-chart.jpg"
+            ),
+            image_base64=rendered.to_base64(),
+            width=rendered.width,
+            height=rendered.height,
+        )
     except OrganizationChartConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (OrganizationChartRenderError, ValueError) as exc:
