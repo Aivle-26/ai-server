@@ -31,6 +31,15 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
+      - name: Install Korean fonts
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          fc-list | grep -i "Noto Sans CJK" | sed -n '1,5p'
+          test -f /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+
       - name: Install dependencies and test
         shell: bash
         run: |
