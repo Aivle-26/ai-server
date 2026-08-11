@@ -27,6 +27,21 @@ class PlanningWbsSchemaTest(unittest.TestCase):
         request = WBSGenerationRequest.model_validate(payload)
         self.assertEqual(request.methodology, ["Analysis", "Build"])
 
+    def test_request_accepts_ui_mockup_required_artifact(self):
+        payload = wbs_request_payload()
+        payload["project_info"]["required_artifacts"].append({
+            "artifact_type": "UI_MOCKUP",
+            "artifact_name": "핵심 화면 UI 목업",
+            "required_version": "1.0",
+        })
+
+        request = WBSGenerationRequest.model_validate(payload)
+
+        self.assertEqual(
+            request.project_info.required_artifacts[-1].artifact_type,
+            "UI_MOCKUP",
+        )
+
     def test_request_rejects_blank_project_empty_requirements_and_duplicates(self):
         cases = []
         blank_project = wbs_request_payload()
