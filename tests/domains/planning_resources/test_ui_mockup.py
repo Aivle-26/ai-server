@@ -47,6 +47,13 @@ def request_payload() -> dict:
                 "category": "FUNCTIONAL",
                 "priority": "HIGH",
             },
+            {
+                "requirement_id": 3,
+                "title": "업무 상세 처리",
+                "description": "담당 업무의 상세 정보와 상태를 확인하고 처리합니다.",
+                "category": "FUNCTIONAL",
+                "priority": "HIGH",
+            },
         ],
     }
 
@@ -56,11 +63,16 @@ def mockup_spec() -> UiMockupSpec:
         {
             "project_title": "AIPM 프로젝트 관리 플랫폼",
             "design_summary": "핵심 업무를 빠르게 파악하는 밝은 업무용 화면",
+            "primary_actor": "PROJECT_MANAGER",
+            "journey_summary": "프로젝트 현황 확인 → 요구사항 및 업무 확인 → 상세 처리",
             "platform": "WEB",
             "screens": [
                 {
                     "screen_name": "프로젝트 대시보드",
                     "purpose": "진행 상태와 주요 업무를 요약합니다.",
+                    "actor": "PROJECT_MANAGER",
+                    "journey_step": 1,
+                    "evidence_requirement_ids": [1],
                     "page_type": "DASHBOARD",
                     "navigation_type": "SIDEBAR",
                     "layout_type": "GRID",
@@ -82,6 +94,9 @@ def mockup_spec() -> UiMockupSpec:
                 {
                     "screen_name": "요구사항 관리",
                     "purpose": "확정 요구사항과 상태를 확인합니다.",
+                    "actor": "PROJECT_MANAGER",
+                    "journey_step": 2,
+                    "evidence_requirement_ids": [2],
                     "page_type": "LIST",
                     "navigation_type": "TABS",
                     "layout_type": "MASTER_DETAIL",
@@ -95,6 +110,30 @@ def mockup_spec() -> UiMockupSpec:
                     ],
                     "primary_actions": ["요구사항 보기"],
                 },
+                {
+                    "screen_name": "업무 상세 및 처리",
+                    "purpose": "선택한 업무의 맥락과 상태를 확인하고 후속 작업을 처리합니다.",
+                    "actor": "PROJECT_MANAGER",
+                    "journey_step": 3,
+                    "evidence_requirement_ids": [3],
+                    "page_type": "DETAIL",
+                    "navigation_type": "SIDEBAR",
+                    "layout_type": "TWO_COLUMN",
+                    "navigation": ["대시보드", "요구사항", "WBS"],
+                    "sections": [
+                        {
+                            "title": "업무 상세",
+                            "component_type": "card",
+                            "items": ["담당자", "상태", "완료 조건"],
+                        },
+                        {
+                            "title": "처리 이력",
+                            "component_type": "list",
+                            "items": ["상태 변경", "검토 의견"],
+                        },
+                    ],
+                    "primary_actions": ["업무 상태 변경"],
+                },
             ],
         }
     )
@@ -103,62 +142,118 @@ def mockup_spec() -> UiMockupSpec:
 def mobile_booking_spec() -> UiMockupSpec:
     return UiMockupSpec.model_validate(
         {
-            "project_title": "동네 체험 예약 앱",
-            "design_summary": "모바일 사용자가 주변 체험을 찾고 예약과 결제를 완료하는 흐름",
+            "project_title": "지역 생활 서비스 예약 앱",
+            "design_summary": "일반 고객의 탐색부터 예약 및 결제 완료까지 이어지는 대표 모바일 흐름",
+            "primary_actor": "CUSTOMER",
+            "journey_summary": "탐색 → 서비스 상세 및 예약 → 결제 및 예약 완료",
             "platform": "MOBILE",
             "screens": [
                 {
-                    "screen_name": "홈과 예약 검색",
-                    "purpose": "지역과 날짜를 선택해 예약 가능한 체험을 찾습니다.",
+                    "screen_name": "위치 기반 서비스 탐색",
+                    "purpose": "현재 위치에서 카테고리와 조건을 적용해 예약 가능한 서비스를 찾습니다.",
+                    "actor": "CUSTOMER",
+                    "journey_step": 1,
+                    "evidence_requirement_ids": [1, 2, 3, 11],
                     "page_type": "BOOKING",
                     "navigation_type": "BOTTOM_NAV",
-                    "layout_type": "FORM_FLOW",
-                    "navigation": ["홈", "지도", "채팅", "마이"],
+                    "layout_type": "FEED",
+                    "navigation": ["홈", "검색", "예약", "마이"],
                     "sections": [
                         {
-                            "title": "체험 검색",
-                            "component_type": "form",
-                            "items": ["지역 검색", "날짜 선택", "예약 가능 시간"],
+                            "title": "위치 및 키워드 검색",
+                            "component_type": "search_bar",
+                            "items": ["현재 위치에서 서비스 검색"],
                         },
                         {
-                            "title": "추천 체험",
-                            "component_type": "card",
-                            "items": ["도자기 체험", "쿠킹 클래스"],
+                            "title": "서비스 카테고리",
+                            "component_type": "category_grid",
+                            "items": ["전체", "생활", "전문", "지역"],
+                        },
+                        {
+                            "title": "검색 조건",
+                            "component_type": "filter_chips",
+                            "items": ["가격", "거리", "평점", "예약 가능"],
+                        },
+                        {
+                            "title": "추천 및 검색 결과",
+                            "component_type": "service_card",
+                            "items": ["추천 서비스", "가까운 서비스", "예약 가능 서비스"],
                         },
                     ],
-                    "primary_actions": ["예약 시간 선택"],
+                    "primary_actions": ["서비스 상세 보기"],
                 },
                 {
-                    "screen_name": "지도 탐색",
-                    "purpose": "현재 위치 주변의 체험 장소를 지도에서 확인합니다.",
-                    "page_type": "MAP",
-                    "navigation_type": "BOTTOM_NAV",
-                    "layout_type": "MASTER_DETAIL",
-                    "navigation": ["홈", "지도", "채팅", "마이"],
-                    "sections": [
-                        {
-                            "title": "주변 체험 장소",
-                            "component_type": "list",
-                            "items": ["거리순 결과", "예약 가능 장소"],
-                        }
-                    ],
-                    "primary_actions": ["장소 보기"],
-                },
-                {
-                    "screen_name": "예약 확인과 결제",
-                    "purpose": "선택한 일정과 결제 정보를 확인하고 예약을 확정합니다.",
+                    "screen_name": "서비스 상세 및 예약 선택",
+                    "purpose": "서비스 정보와 위치를 확인하고 예약 날짜, 시간, 옵션을 선택합니다.",
+                    "actor": "CUSTOMER",
+                    "journey_step": 2,
+                    "evidence_requirement_ids": [4, 5, 6, 7],
                     "page_type": "DETAIL",
+                    "navigation_type": "BOTTOM_NAV",
+                    "layout_type": "FORM_FLOW",
+                    "navigation": ["홈", "검색", "예약", "마이"],
+                    "sections": [
+                        {
+                            "title": "서비스 정보",
+                            "component_type": "service_card",
+                            "items": ["서비스 이미지와 설명", "가격과 평점", "운영 시간"],
+                        },
+                        {
+                            "title": "서비스 위치",
+                            "component_type": "map_preview",
+                            "items": ["지도 위치"],
+                        },
+                        {
+                            "title": "예약 날짜",
+                            "component_type": "date_picker",
+                            "items": ["예약 가능 날짜"],
+                        },
+                        {
+                            "title": "예약 가능 시간",
+                            "component_type": "time_slots",
+                            "items": ["09:00", "11:00", "14:00", "16:00"],
+                        },
+                        {
+                            "title": "서비스 옵션",
+                            "component_type": "option_selector",
+                            "items": ["기본 옵션", "추가 옵션"],
+                        },
+                    ],
+                    "primary_actions": ["예약하기"],
+                },
+                {
+                    "screen_name": "결제 및 예약 확정",
+                    "purpose": "예약 정보, 쿠폰, 결제 수단과 최종 금액을 확인해 예약을 완료합니다.",
+                    "actor": "CUSTOMER",
+                    "journey_step": 3,
+                    "evidence_requirement_ids": [8, 9, 10],
+                    "page_type": "FORM",
                     "navigation_type": "NONE",
                     "layout_type": "FORM_FLOW",
                     "navigation": [],
                     "sections": [
                         {
-                            "title": "예약 정보",
+                            "title": "예약 정보 요약",
                             "component_type": "card",
-                            "items": ["선택한 체험", "예약 날짜와 시간", "결제 수단"],
-                        }
+                            "items": ["선택 서비스", "예약 날짜와 시간", "선택 옵션"],
+                        },
+                        {
+                            "title": "쿠폰 및 최종 금액",
+                            "component_type": "price_summary",
+                            "items": ["선택 옵션", "쿠폰 할인", "최종 결제 금액"],
+                        },
+                        {
+                            "title": "결제 수단",
+                            "component_type": "payment_methods",
+                            "items": ["카드 결제", "간편 결제"],
+                        },
+                        {
+                            "title": "예약 완료 안내",
+                            "component_type": "card",
+                            "items": ["결제 완료 후 예약 번호와 일정을 확인"],
+                        },
                     ],
-                    "primary_actions": ["예약 확정"],
+                    "primary_actions": ["결제하고 예약 확정"],
                 },
             ],
         }
@@ -170,11 +265,16 @@ def ecommerce_spec() -> UiMockupSpec:
         {
             "project_title": "로컬 브랜드 온라인 쇼핑몰",
             "design_summary": "상품 탐색에서 상세 확인과 주문으로 이어지는 웹 쇼핑 흐름",
+            "primary_actor": "CUSTOMER",
+            "journey_summary": "상품 탐색 → 상품 상세 → 장바구니 및 결제",
             "platform": "WEB",
             "screens": [
                 {
                     "screen_name": "상품 탐색",
                     "purpose": "상품을 검색하고 카테고리별로 비교합니다.",
+                    "actor": "CUSTOMER",
+                    "journey_step": 1,
+                    "evidence_requirement_ids": [1],
                     "page_type": "ECOMMERCE",
                     "navigation_type": "TOP_NAV",
                     "layout_type": "GRID",
@@ -182,8 +282,18 @@ def ecommerce_spec() -> UiMockupSpec:
                     "sections": [
                         {
                             "title": "상품 검색",
-                            "component_type": "form",
+                            "component_type": "search_bar",
+                            "items": ["상품명 검색"],
+                        },
+                        {
+                            "title": "상품 카테고리",
+                            "component_type": "category_grid",
                             "items": ["리빙", "패션", "푸드", "지역 브랜드 상품"],
+                        },
+                        {
+                            "title": "상품 결과",
+                            "component_type": "service_card",
+                            "items": ["신상품", "추천 상품", "지역 브랜드 상품"],
                         }
                     ],
                     "primary_actions": ["상품 보기"],
@@ -191,6 +301,9 @@ def ecommerce_spec() -> UiMockupSpec:
                 {
                     "screen_name": "상품 상세",
                     "purpose": "상품 정보와 배송 조건을 확인하고 장바구니에 담습니다.",
+                    "actor": "CUSTOMER",
+                    "journey_step": 2,
+                    "evidence_requirement_ids": [2],
                     "page_type": "DETAIL",
                     "navigation_type": "TOP_NAV",
                     "layout_type": "TWO_COLUMN",
@@ -198,11 +311,45 @@ def ecommerce_spec() -> UiMockupSpec:
                     "sections": [
                         {
                             "title": "상품 정보",
-                            "component_type": "card",
+                            "component_type": "service_card",
                             "items": ["상품 설명", "옵션 선택", "배송 안내"],
+                        },
+                        {
+                            "title": "리뷰 요약",
+                            "component_type": "review_summary",
+                            "items": ["평점", "구매 후기"],
                         }
                     ],
                     "primary_actions": ["장바구니 담기"],
+                },
+                {
+                    "screen_name": "장바구니 및 주문 결제",
+                    "purpose": "선택 상품과 금액을 확인하고 결제 수단을 선택해 주문을 완료합니다.",
+                    "actor": "CUSTOMER",
+                    "journey_step": 3,
+                    "evidence_requirement_ids": [3],
+                    "page_type": "FORM",
+                    "navigation_type": "TOP_NAV",
+                    "layout_type": "FORM_FLOW",
+                    "navigation": ["장바구니", "주문 정보", "결제"],
+                    "sections": [
+                        {
+                            "title": "주문 상품",
+                            "component_type": "card",
+                            "items": ["선택 상품", "수량과 옵션"],
+                        },
+                        {
+                            "title": "주문 금액",
+                            "component_type": "price_summary",
+                            "items": ["상품 금액", "배송비", "최종 결제 금액"],
+                        },
+                        {
+                            "title": "결제 수단",
+                            "component_type": "payment_methods",
+                            "items": ["카드 결제", "간편 결제"],
+                        },
+                    ],
+                    "primary_actions": ["주문 결제"],
                 },
             ],
         }
@@ -214,11 +361,16 @@ def api_etl_spec() -> UiMockupSpec:
         {
             "project_title": "주문 데이터 ETL API",
             "design_summary": "요구사항에 명시된 데이터 입력과 변환 범위만 설명하는 화면",
+            "primary_actor": "OPERATOR",
+            "journey_summary": "API 입력 범위 확인 → ETL 변환 규칙 확인",
             "platform": "WEB",
             "screens": [
                 {
                     "screen_name": "처리 범위 명세",
                     "purpose": "API 입력과 ETL 변환 규칙을 읽기 전용으로 확인합니다.",
+                    "actor": "OPERATOR",
+                    "journey_step": 1,
+                    "evidence_requirement_ids": [1, 2],
                     "page_type": "DETAIL",
                     "navigation_type": "NONE",
                     "layout_type": "FULL_WIDTH",
@@ -237,6 +389,82 @@ def api_etl_spec() -> UiMockupSpec:
                     ],
                     "primary_actions": [],
                 }
+            ],
+        }
+    )
+
+
+def community_spec() -> UiMockupSpec:
+    return UiMockupSpec.model_validate(
+        {
+            "project_title": "동네 이야기 커뮤니티",
+            "design_summary": "커뮤니티 회원이 글을 탐색하고 읽은 뒤 작성과 댓글 참여로 이어지는 흐름",
+            "primary_actor": "COMMUNITY_MEMBER",
+            "journey_summary": "피드 탐색 → 게시글 상세 및 댓글 → 글 작성",
+            "platform": "MOBILE",
+            "screens": [
+                {
+                    "screen_name": "관심 주제 피드 탐색",
+                    "purpose": "관심 주제와 최신 게시글을 탐색합니다.",
+                    "actor": "COMMUNITY_MEMBER",
+                    "journey_step": 1,
+                    "evidence_requirement_ids": [1],
+                    "page_type": "LIST",
+                    "navigation_type": "BOTTOM_NAV",
+                    "layout_type": "FEED",
+                    "navigation": ["피드", "검색", "작성", "내 활동"],
+                    "sections": [
+                        {
+                            "title": "게시글 피드",
+                            "component_type": "list",
+                            "items": ["최신 글", "관심 주제", "인기 글"],
+                        }
+                    ],
+                    "primary_actions": ["게시글 보기"],
+                },
+                {
+                    "screen_name": "게시글 상세 및 댓글",
+                    "purpose": "게시글 내용을 읽고 댓글로 의견을 나눕니다.",
+                    "actor": "COMMUNITY_MEMBER",
+                    "journey_step": 2,
+                    "evidence_requirement_ids": [2],
+                    "page_type": "DETAIL",
+                    "navigation_type": "BOTTOM_NAV",
+                    "layout_type": "FEED",
+                    "navigation": ["피드", "검색", "작성", "내 활동"],
+                    "sections": [
+                        {
+                            "title": "게시글 내용",
+                            "component_type": "card",
+                            "items": ["제목과 본문", "작성자", "작성 시각"],
+                        },
+                        {
+                            "title": "댓글 대화",
+                            "component_type": "list",
+                            "items": ["댓글 목록", "답글"],
+                        },
+                    ],
+                    "primary_actions": ["댓글 작성"],
+                },
+                {
+                    "screen_name": "게시글 작성 및 발행",
+                    "purpose": "주제와 내용을 입력해 새 게시글을 발행합니다.",
+                    "actor": "COMMUNITY_MEMBER",
+                    "journey_step": 3,
+                    "evidence_requirement_ids": [3],
+                    "page_type": "FORM",
+                    "navigation_type": "BOTTOM_NAV",
+                    "layout_type": "FORM_FLOW",
+                    "navigation": ["피드", "검색", "작성", "내 활동"],
+                    "sections": [
+                        {
+                            "title": "게시글 작성",
+                            "component_type": "form",
+                            "items": ["주제", "제목", "본문"],
+                        }
+                    ],
+                    "primary_actions": ["게시글 발행"],
+                },
             ],
         }
     )
@@ -262,6 +490,55 @@ def generation_payload(
             for index, description in enumerate(requirements, start=1)
         ],
     }
+
+
+def mobile_rfp_payload() -> dict:
+    requirements = [
+        ("위치 기반 통합 검색", "일반 고객은 현재 위치와 키워드로 서비스를 검색합니다.", "HIGH"),
+        ("카테고리 검색", "일반 고객은 서비스 카테고리를 선택해 탐색합니다.", "HIGH"),
+        ("복합 검색 필터", "가격, 거리, 평점, 예약 가능 여부를 함께 필터링합니다.", "HIGH"),
+        ("서비스 상세", "서비스 이미지, 설명, 가격, 평점과 운영 시간을 확인합니다.", "HIGH"),
+        ("서비스 지도", "서비스 위치와 주변 정보를 지도에서 확인합니다.", "HIGH"),
+        ("예약 가능 슬롯", "예약 가능한 날짜와 시간 슬롯을 선택합니다.", "HIGH"),
+        ("서비스 옵션", "예약 전에 제공 옵션과 추가 옵션을 선택합니다.", "HIGH"),
+        ("쿠폰 적용", "결제 전에 사용 가능한 쿠폰을 선택해 적용합니다.", "HIGH"),
+        ("PG 결제", "카드 또는 간편 결제 수단으로 PG 결제를 완료합니다.", "HIGH"),
+        ("예약 완료", "결제 성공 후 예약 번호와 확정 일정을 확인합니다.", "HIGH"),
+        ("맞춤 추천", "일반 고객에게 위치와 관심사 기반 서비스를 추천합니다.", "MEDIUM"),
+        ("리뷰", "일반 고객은 서비스 리뷰를 조회하고 작성합니다.", "MEDIUM"),
+        ("채팅", "일반 고객은 서비스 파트너와 채팅합니다.", "MEDIUM"),
+        ("즐겨찾기", "일반 고객은 관심 서비스를 즐겨찾기에 저장합니다.", "MEDIUM"),
+        ("파트너 포털", "파트너는 웹 포털에서 예약과 서비스를 관리합니다.", "MEDIUM"),
+        ("관리자 포털", "관리자는 웹 포털에서 사용자와 거래를 관리합니다.", "MEDIUM"),
+    ]
+    return {
+        "project_id": 72,
+        "project_title": "지역 생활 서비스 예약 앱",
+        "project_description": "일반 고객용 모바일 앱과 별도 파트너 및 관리자 포털을 제공합니다.",
+        "confirmed_requirements": [
+            {
+                "requirement_id": index,
+                "title": title,
+                "description": description,
+                "category": "FUNCTIONAL",
+                "priority": priority,
+            }
+            for index, (title, description, priority) in enumerate(
+                requirements,
+                start=1,
+            )
+        ],
+    }
+
+
+def community_payload() -> dict:
+    return generation_payload(
+        "동네 이야기 커뮤니티",
+        "모바일 회원이 지역 이야기를 공유하는 커뮤니티",
+        "커뮤니티 회원은 관심 주제와 최신 게시글 피드를 탐색합니다.",
+        "게시글 상세를 읽고 댓글과 답글을 작성합니다.",
+        "주제, 제목, 본문을 입력해 새 게시글을 발행합니다.",
+    )
 
 
 def usable_font_path() -> Path:
@@ -332,23 +609,120 @@ class UiMockupTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             UiMockupSpec.model_validate(payload)
 
+    def test_spec_requires_screen_evidence_and_primary_actor_consistency(self):
+        missing_evidence = mobile_booking_spec().model_dump()
+        missing_evidence["screens"][0]["evidence_requirement_ids"] = []
+        with self.assertRaises(ValidationError):
+            UiMockupSpec.model_validate(missing_evidence)
+
+        mixed_actor = mobile_booking_spec().model_dump()
+        mixed_actor["screens"][1]["actor"] = "ADMIN"
+        with self.assertRaises(ValidationError):
+            UiMockupSpec.model_validate(mixed_actor)
+
+    def test_spec_requires_contiguous_journey_and_domain_screen_names(self):
+        repeated_step = mobile_booking_spec().model_dump()
+        repeated_step["screens"][2]["journey_step"] = 2
+        with self.assertRaises(ValidationError):
+            UiMockupSpec.model_validate(repeated_step)
+
+        for name in ("메인 화면", "목록 화면", "상세 화면", "관리 화면"):
+            with self.subTest(generic_name=name):
+                generic_name = mobile_booking_spec().model_dump()
+                generic_name["screens"][1]["screen_name"] = name
+                with self.assertRaises(ValidationError):
+                    UiMockupSpec.model_validate(generic_name)
+
+    def test_generation_rejects_unknown_screen_evidence_requirement_id(self):
+        payload = mobile_booking_spec().model_dump()
+        payload["screens"][0]["evidence_requirement_ids"] = [999]
+        parsed_spec = UiMockupSpec.model_validate(payload)
+        with self.assertRaises(UiMockupLLMGenerationError):
+            self._generate_with_mock(mobile_rfp_payload(), parsed_spec)
+
+    def test_generation_context_preserves_backend_requirement_fields(self):
+        payload = mobile_rfp_payload()
+        _, parse_call = self._generate_with_mock(payload, mobile_booking_spec())
+        context = json.loads(parse_call.kwargs["input"])
+
+        self.assertEqual(context["project_title"], payload["project_title"])
+        self.assertEqual(
+            context["project_description"],
+            payload["project_description"],
+        )
+        self.assertEqual(
+            len(context["confirmed_requirements"]),
+            len(payload["confirmed_requirements"]),
+        )
+        first = context["confirmed_requirements"][0]
+        self.assertEqual(
+            set(first),
+            {"id", "title", "description", "category", "priority"},
+        )
+        self.assertEqual(first["id"], 1)
+        self.assertEqual(first["priority"], "HIGH")
+
+    def test_mobile_rfp_journey_covers_core_must_requirements(self):
+        spec = mobile_booking_spec()
+        core_must_ids = set(range(1, 11))
+        covered_ids = {
+            requirement_id
+            for screen in spec.screens
+            for requirement_id in screen.evidence_requirement_ids
+        }
+        coverage = len(core_must_ids & covered_ids) / len(core_must_ids)
+
+        self.assertEqual(spec.primary_actor, "CUSTOMER")
+        self.assertEqual([screen.journey_step for screen in spec.screens], [1, 2, 3])
+        self.assertGreaterEqual(coverage, 0.8)
+        self.assertEqual(coverage, 1.0)
+        self.assertTrue(all(screen.actor == "CUSTOMER" for screen in spec.screens))
+        self.assertNotIn("DASHBOARD", {screen.page_type for screen in spec.screens})
+
+        components = [
+            {section.component_type for section in screen.sections}
+            for screen in spec.screens
+        ]
+        self.assertTrue({"search_bar", "filter_chips"} <= components[0])
+        self.assertTrue({"date_picker", "time_slots"} <= components[1])
+        self.assertTrue({"price_summary", "payment_methods"} <= components[2])
+
+    def test_cross_domain_fixtures_select_different_ordered_journeys(self):
+        fixtures = {
+            "mobile": mobile_booking_spec(),
+            "ecommerce": ecommerce_spec(),
+            "pm": mockup_spec(),
+            "community": community_spec(),
+        }
+        expected_actors = {
+            "mobile": "CUSTOMER",
+            "ecommerce": "CUSTOMER",
+            "pm": "PROJECT_MANAGER",
+            "community": "COMMUNITY_MEMBER",
+        }
+
+        journeys = set()
+        screen_sequences = set()
+        for name, spec in fixtures.items():
+            with self.subTest(name=name):
+                self.assertEqual(spec.primary_actor, expected_actors[name])
+                self.assertEqual(
+                    [screen.journey_step for screen in spec.screens],
+                    list(range(1, len(spec.screens) + 1)),
+                )
+                journeys.add(spec.journey_summary)
+                screen_sequences.add(tuple(screen.screen_name for screen in spec.screens))
+
+        self.assertEqual(len(journeys), 4)
+        self.assertEqual(len(screen_sequences), 4)
+
     def test_generation_fixtures_preserve_domain_layout_semantics(self):
         fixtures = [
             (
-                generation_payload(
-                    "동네 체험 예약 앱",
-                    "모바일 사용자를 위한 예약 서비스",
-                    "모바일 사용자는 회원가입과 로그인을 할 수 있습니다.",
-                    "지역과 날짜로 체험을 검색합니다.",
-                    "예약 가능한 시간을 선택합니다.",
-                    "결제를 완료하고 예약을 확인합니다.",
-                    "지도에서 주변 장소를 찾습니다.",
-                    "호스트와 채팅하고 리뷰를 작성합니다.",
-                    "마이페이지에서 예약 내역을 확인합니다.",
-                ),
+                mobile_rfp_payload(),
                 mobile_booking_spec(),
                 "MOBILE",
-                {"BOOKING", "MAP", "DETAIL"},
+                {"BOOKING", "DETAIL", "FORM"},
             ),
             (
                 generation_payload(
@@ -356,17 +730,17 @@ class UiMockupTest(unittest.TestCase):
                     "상품 판매를 위한 웹 쇼핑몰",
                     "상품 목록을 카테고리와 검색으로 탐색합니다.",
                     "상품 상세와 리뷰 및 배송 조건을 확인합니다.",
-                    "장바구니에 담고 주문을 진행합니다.",
+                    "장바구니에 담고 결제를 완료합니다.",
                 ),
                 ecommerce_spec(),
                 "WEB",
-                {"ECOMMERCE", "DETAIL"},
+                {"ECOMMERCE", "DETAIL", "FORM"},
             ),
             (
                 request_payload(),
                 mockup_spec(),
                 "WEB",
-                {"DASHBOARD", "LIST"},
+                {"DASHBOARD", "LIST", "DETAIL"},
             ),
             (
                 generation_payload(
@@ -378,6 +752,12 @@ class UiMockupTest(unittest.TestCase):
                 api_etl_spec(),
                 "WEB",
                 {"DETAIL"},
+            ),
+            (
+                community_payload(),
+                community_spec(),
+                "MOBILE",
+                {"LIST", "DETAIL", "FORM"},
             ),
         ]
 
@@ -396,6 +776,10 @@ class UiMockupTest(unittest.TestCase):
                 )
                 instructions = parse_call.kwargs["instructions"]
                 self.assertIn("confirmed_requirements", instructions)
+                self.assertIn("primary actor", instructions)
+                self.assertIn("journey_step", instructions)
+                self.assertIn("evidence_requirement_ids", instructions)
+                self.assertIn("HIGH/MUST", instructions)
                 self.assertIn("Pmate AI", instructions)
                 self.assertIn("근거가 없는 실제 수치", instructions)
                 self.assertNotIn("한국어 업무용 SaaS UX 설계자", instructions)
@@ -540,6 +924,11 @@ class UiMockupTest(unittest.TestCase):
                     len(sent_context["confirmed_requirements"]),
                     len(payload["confirmed_requirements"]),
                 )
+                instructions = parse_call.kwargs["instructions"]
+                self.assertIn("primary actor", instructions)
+                self.assertIn("end-to-end", instructions)
+                self.assertIn("candidate_screens", instructions)
+                self.assertIn("HIGH/MUST", instructions)
 
     def test_assessment_endpoint_returns_project_decision(self):
         client = TestClient(app)

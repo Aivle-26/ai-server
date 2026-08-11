@@ -29,8 +29,29 @@ ComponentType = Literal[
     "kanban",
     "list",
     "modal",
+    "search_bar",
+    "filter_chips",
+    "category_grid",
+    "service_card",
+    "map_preview",
+    "date_picker",
+    "time_slots",
+    "option_selector",
+    "price_summary",
+    "payment_methods",
+    "review_summary",
 ]
 Platform = Literal["WEB", "MOBILE"]
+Actor = Literal[
+    "CUSTOMER",
+    "PARTNER",
+    "ADMIN",
+    "PROJECT_MANAGER",
+    "TEAM_MEMBER",
+    "COMMUNITY_MEMBER",
+    "OPERATOR",
+    "PUBLIC",
+]
 PageType = Literal[
     "DASHBOARD",
     "LIST",
@@ -51,6 +72,28 @@ LayoutType = Literal[
     "FEED",
     "FORM_FLOW",
 ]
+
+_GENERIC_SCREEN_NAMES = {
+    "메인 화면",
+    "목록 화면",
+    "상세 화면",
+    "폼 화면",
+    "관리 화면",
+}
+
+_SEMANTIC_COMPONENTS = frozenset({
+    "search_bar",
+    "filter_chips",
+    "category_grid",
+    "service_card",
+    "map_preview",
+    "date_picker",
+    "time_slots",
+    "option_selector",
+    "price_summary",
+    "payment_methods",
+    "review_summary",
+})
 
 _FONT_CANDIDATES = (
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -157,6 +200,12 @@ class UiMockupScreen(BaseModel):
 
     screen_name: str = Field(min_length=1, max_length=60)
     purpose: str = Field(min_length=1, max_length=160)
+    actor: Actor
+    journey_step: int = Field(ge=1, le=3)
+    evidence_requirement_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        min_length=1,
+        max_length=6,
+    )
     page_type: PageType
     navigation_type: NavigationType
     layout_type: LayoutType
@@ -172,8 +221,13 @@ class UiMockupScreen(BaseModel):
         self.primary_actions = [
             item.strip()[:30] for item in self.primary_actions if item.strip()
         ]
+        self.evidence_requirement_ids = list(
+            dict.fromkeys(self.evidence_requirement_ids)
+        )
         if not self.screen_name or not self.purpose:
             raise ValueError("screen name and purpose are required")
+        if self.screen_name in _GENERIC_SCREEN_NAMES:
+            raise ValueError("screen name must describe its domain purpose")
         if self.navigation_type == "NONE":
             self.navigation = []
         elif not self.navigation:
@@ -186,6 +240,8 @@ class UiMockupSpec(BaseModel):
 
     project_title: str = Field(min_length=1, max_length=200)
     design_summary: str = Field(min_length=1, max_length=300)
+    primary_actor: Actor
+    journey_summary: str = Field(min_length=1, max_length=300)
     platform: Platform
     screens: list[UiMockupScreen] = Field(min_length=1, max_length=3)
 
@@ -195,6 +251,11 @@ class UiMockupSpec(BaseModel):
             screen.navigation_type == "SIDEBAR" for screen in self.screens
         ):
             raise ValueError("mobile screens cannot use sidebar navigation")
+        if any(screen.actor != self.primary_actor for screen in self.screens):
+            raise ValueError("all representative screens must use the primary actor")
+        expected_steps = list(range(1, len(self.screens) + 1))
+        if [screen.journey_step for screen in self.screens] != expected_steps:
+            raise ValueError("screens must follow contiguous journey order")
         return self
 
 
@@ -297,6 +358,217 @@ def _draw_component(
     )
     top = y1 + 42
     component = section.component_type
+    if component == "search_bar":
+        bottom = min(y2 - 12, top + 42)
+        if bottom > top:
+            _draw_search(
+                draw,
+                (x1 + 12, top, x2 - 12, bottom),
+                fonts,
+                section.items[0] if section.items else "",
+            )
+        return
+    if component in {"filter_chips", "option_selector"}:
+        cursor_x = x1 + 12
+        cursor_y = top
+        row_height = 30
+        for item in section.items[:6]:
+            width = min(
+                x2 - x1 - 24,
+                max(58, _text_width(draw, item, fonts.small) + 24),
+            )
+            if cursor_x + width > x2 - 12:
+                cursor_x = x1 + 12
+                cursor_y += row_height + 7
+            if cursor_y + row_height > y2 - 10:
+                break
+            selected = component == "option_selector" and cursor_x == x1 + 12
+            draw.rounded_rectangle(
+                (cursor_x, cursor_y, cursor_x + width, cursor_y + row_height),
+                radius=15,
+                fill="#DDE9FF" if selected else "#F7F9FC",
+                outline="#9CB9EA" if selected else "#D6DEE9",
+            )
+            draw.text(
+                (cursor_x + 12, cursor_y + 6),
+                _fit_text(draw, item, fonts.small, width - 24),
+                fill="#2458B5" if selected else "#526074",
+                font=fonts.small,
+            )
+            cursor_x += width + 7
+        return
+    if component == "category_grid":
+        items = section.items[:6]
+        columns = 3
+        gap = 7
+        cell_width = (x2 - x1 - 24 - gap * (columns - 1)) // columns
+        rows = max(1, (len(items) + columns - 1) // columns)
+        cell_height = max(30, min(48, (y2 - top - 12 - gap * (rows - 1)) // rows))
+        for index, item in enumerate(items):
+            row, column = divmod(index, columns)
+            left = x1 + 12 + column * (cell_width + gap)
+            cell_top = top + row * (cell_height + gap)
+            if cell_top + cell_height > y2 - 10:
+                break
+            draw.rounded_rectangle(
+                (left, cell_top, left + cell_width, cell_top + cell_height),
+                radius=8,
+                fill="#F2F6FC",
+                outline="#D7E1EF",
+            )
+            draw.ellipse(
+                (left + 9, cell_top + 9, left + 25, cell_top + 25),
+                fill="#C9DBFA",
+            )
+            draw.text(
+                (left + 8, cell_top + cell_height - 19),
+                _fit_text(draw, item, fonts.small, cell_width - 16),
+                fill="#42526A",
+                font=fonts.small,
+            )
+        return
+    if component == "service_card":
+        items = section.items[:3]
+        row_height = max(46, min(62, (y2 - top - 10) // max(1, len(items))))
+        for index, item in enumerate(items):
+            row_top = top + index * row_height
+            if row_top + row_height - 6 > y2 - 8:
+                break
+            draw.rounded_rectangle(
+                (x1 + 12, row_top, x2 - 12, row_top + row_height - 6),
+                radius=8,
+                fill="#F9FBFE",
+                outline="#DCE4EF",
+            )
+            draw.rounded_rectangle(
+                (x1 + 20, row_top + 8, x1 + 64, row_top + row_height - 14),
+                radius=6,
+                fill="#D5E2F3",
+            )
+            draw.text(
+                (x1 + 74, row_top + 11),
+                _fit_text(draw, item, fonts.small, x2 - x1 - 100),
+                fill="#334155",
+                font=fonts.small,
+            )
+            draw.rounded_rectangle(
+                (x1 + 74, row_top + 34, x2 - 28, row_top + 41),
+                radius=3,
+                fill="#E5EAF1",
+            )
+        return
+    if component == "map_preview":
+        map_box = (x1 + 12, top, x2 - 12, y2 - 12)
+        draw.rounded_rectangle(map_box, radius=8, fill="#DFEADF")
+        mx1, my1, mx2, my2 = map_box
+        draw.line((mx1 + 12, my1 + 8, mx2 - 18, my2 - 14), fill="#FFFFFF", width=5)
+        draw.line((mx1 + 34, my2 - 6, mx2 - 10, my1 + 18), fill="#FFFFFF", width=5)
+        cx = mx1 + (mx2 - mx1) * 2 // 3
+        cy = my1 + (my2 - my1) // 2
+        draw.ellipse((cx - 8, cy - 8, cx + 8, cy + 8), fill="#2563EB", outline="#FFFFFF", width=2)
+        return
+    if component == "date_picker":
+        columns = 7
+        gap = 5
+        cell = max(16, min(28, (x2 - x1 - 24 - gap * (columns - 1)) // columns))
+        for index in range(14):
+            row, column = divmod(index, columns)
+            left = x1 + 12 + column * (cell + gap)
+            cell_top = top + row * (cell + 7)
+            if cell_top + cell > y2 - 10:
+                break
+            selected = index == 9
+            draw.rounded_rectangle(
+                (left, cell_top, left + cell, cell_top + cell),
+                radius=5,
+                fill="#2563EB" if selected else "#F5F7FB",
+                outline="#D9E1EC",
+            )
+        return
+    if component == "time_slots":
+        items = section.items[:6]
+        columns = 3
+        gap = 7
+        width = (x2 - x1 - 24 - gap * (columns - 1)) // columns
+        for index, item in enumerate(items):
+            row, column = divmod(index, columns)
+            left = x1 + 12 + column * (width + gap)
+            slot_top = top + row * 37
+            if slot_top + 30 > y2 - 8:
+                break
+            draw.rounded_rectangle(
+                (left, slot_top, left + width, slot_top + 30),
+                radius=7,
+                fill="#EAF1FF" if index == 1 else "#FFFFFF",
+                outline="#AFC3E1",
+            )
+            draw.text(
+                (left + 8, slot_top + 6),
+                _fit_text(draw, item, fonts.small, width - 16),
+                fill="#315EC7",
+                font=fonts.small,
+            )
+        return
+    if component == "price_summary":
+        for index, item in enumerate(section.items[:4]):
+            row_top = top + index * 27
+            if row_top + 21 > y2 - 8:
+                break
+            draw.text(
+                (x1 + 14, row_top),
+                _fit_text(draw, item, fonts.small, x2 - x1 - 95),
+                fill="#475569",
+                font=fonts.small,
+            )
+            draw.rounded_rectangle(
+                (x2 - 78, row_top + 5, x2 - 14, row_top + 13),
+                radius=4,
+                fill="#BDD0EE" if index + 1 < len(section.items[:4]) else "#4F7FEF",
+            )
+        return
+    if component == "payment_methods":
+        for index, item in enumerate(section.items[:4]):
+            row_top = top + index * 34
+            if row_top + 28 > y2 - 8:
+                break
+            draw.rounded_rectangle(
+                (x1 + 12, row_top, x2 - 12, row_top + 28),
+                radius=7,
+                fill="#F8FAFD",
+                outline="#DCE3ED",
+            )
+            draw.ellipse(
+                (x1 + 21, row_top + 8, x1 + 33, row_top + 20),
+                fill="#2563EB" if index == 0 else "#FFFFFF",
+                outline="#8FA3BF",
+            )
+            draw.text(
+                (x1 + 42, row_top + 6),
+                _fit_text(draw, item, fonts.small, x2 - x1 - 64),
+                fill="#475569",
+                font=fonts.small,
+            )
+        return
+    if component == "review_summary":
+        for index in range(5):
+            left = x1 + 14 + index * 22
+            draw.ellipse((left, top, left + 14, top + 14), fill="#F4B740")
+        for index, item in enumerate(section.items[:3]):
+            row_top = top + 27 + index * 25
+            if row_top + 18 > y2 - 8:
+                break
+            draw.text(
+                (x1 + 14, row_top),
+                _fit_text(draw, item, fonts.small, 90),
+                fill="#526074",
+                font=fonts.small,
+            )
+            draw.rounded_rectangle(
+                (x1 + 105, row_top + 5, x2 - 18, row_top + 12),
+                radius=3,
+                fill="#D8E3F4",
+            )
+        return
     if component == "chart":
         chart_bottom = y2 - 15
         colors = ("#B9CCFF", "#82A6FF", "#4F7FEF", "#315EC7")
@@ -701,6 +973,38 @@ def _draw_chat(
     draw.ellipse((x2 - 36, y2 - 34, x2 - 12, y2 - 10), fill="#2563EB")
 
 
+def _draw_semantic_page(
+    draw: ImageDraw.ImageDraw,
+    screen: UiMockupScreen,
+    box: tuple[int, int, int, int],
+    fonts: _Fonts,
+    mobile: bool,
+) -> None:
+    x1, y1, x2, y2 = box
+    gap = 8 if mobile else 10
+    action_height = 40 if screen.primary_actions else 0
+    action_gap = gap if action_height else 0
+    sections_bottom = y2 - action_height - action_gap
+    available = sections_bottom - y1 - gap * (len(screen.sections) - 1)
+    section_height = max(86, available // len(screen.sections))
+
+    top = y1
+    for section in screen.sections:
+        bottom = min(sections_bottom, top + section_height)
+        if bottom - top < 72:
+            break
+        _draw_component(draw, section, (x1, top, x2, bottom), fonts)
+        top = bottom + gap
+
+    if screen.primary_actions:
+        _draw_action(
+            draw,
+            (x1, y2 - action_height, x2, y2),
+            fonts,
+            screen.primary_actions[0],
+        )
+
+
 def _draw_page_content(
     draw: ImageDraw.ImageDraw,
     screen: UiMockupScreen,
@@ -708,6 +1012,12 @@ def _draw_page_content(
     fonts: _Fonts,
     mobile: bool,
 ) -> None:
+    if any(
+        section.component_type in _SEMANTIC_COMPONENTS
+        for section in screen.sections
+    ):
+        _draw_semantic_page(draw, screen, box, fonts, mobile)
+        return
     renderer = {
         "DASHBOARD": _draw_dashboard,
         "LIST": _draw_list_page,
