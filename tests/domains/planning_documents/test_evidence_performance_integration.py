@@ -153,11 +153,12 @@ class EvidencePerformanceIntegrationTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             PlanningAnalysisSettings(planning_analysis_retry_count=1)
 
-    def test_default_analysis_timeout_is_five_minutes(self):
+    def test_default_analysis_settings(self):
         with patch.dict(os.environ, {}, clear=True):
             settings = PlanningAnalysisSettings.from_env()
 
         self.assertEqual(settings.planning_analysis_timeout_seconds, 300)
+        self.assertEqual(settings.planning_max_analysis_chunks, 10)
 
     def test_selector_shares_the_budget_and_prioritizes_documents(self):
         selection = select_analysis_inputs(
