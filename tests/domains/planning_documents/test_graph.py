@@ -206,7 +206,7 @@ class PlanningDocumentGraphTest(unittest.TestCase):
         service = PlanningDocumentService()
         text = (
             "주요 산출물: RFP, 제안서, 요구사항 정의서, 기능 명세서, WBS, ERD, "
-            "회의록, 테스트 결과서, 주간 보고서, 최종 보고서, UI 설계서"
+            "회의록, 테스트 결과서, 주간 보고서, 최종 보고서, UI 설계서, UI 목업"
         )
         artifacts = service._artifact_list(text, ("주요 산출물",))
         self.assertEqual([artifact["artifact_type"] for artifact in artifacts], [
@@ -221,6 +221,7 @@ class PlanningDocumentGraphTest(unittest.TestCase):
             "WEEKLY_REPORT",
             "FINAL_REPORT",
             "UI_DESIGN",
+            "UI_MOCKUP",
         ])
         self.assertTrue(all(
             artifact["required_version"] == "1.0" for artifact in artifacts
@@ -354,6 +355,7 @@ class PlanningDocumentGraphTest(unittest.TestCase):
             "WEEKLY_REPORT",
             "FINAL_REPORT",
             "UI_DESIGN",
+            "UI_MOCKUP",
         ])
 
 

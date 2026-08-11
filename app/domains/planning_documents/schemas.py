@@ -29,6 +29,7 @@ ArtifactType = Literal[
     "WEEKLY_REPORT",
     "FINAL_REPORT",
     "UI_DESIGN",
+    "UI_MOCKUP",
 ]
 RequirementChangeType = Literal["ADDED", "MODIFIED", "REMOVED", "UNCHANGED"]
 RequirementReviewStatus = Literal["PENDING_REVIEW"]
