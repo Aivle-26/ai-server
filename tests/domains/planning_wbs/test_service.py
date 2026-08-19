@@ -164,7 +164,7 @@ class PlanningWbsServiceTest(unittest.TestCase):
         self.assertEqual(work_package["required_skills"], [])
         self.assertEqual(task["required_skills"], ["BACKEND_DEVELOPMENT"])
 
-    def test_independent_roles_left_on_leaf_task_add_warning(self):
+    def test_independent_roles_are_split_into_sibling_tasks(self):
         outcome = self.service.finalize(
             self.request,
             [plan_with_task(required_skills=[
@@ -173,8 +173,20 @@ class PlanningWbsServiceTest(unittest.TestCase):
             ])],
         )
 
+        leaf_tasks = [
+            item for item in outcome.result["wbs_items"]
+            if item["item_type"] == "TASK"
+        ]
+        self.assertEqual(
+            [item["required_skills"] for item in leaf_tasks],
+            [["BACKEND_DEVELOPMENT"], ["FRONTEND_DEVELOPMENT"]],
+        )
+        self.assertTrue(all(
+            item["mapped_requirement_ids"] == [1]
+            for item in leaf_tasks
+        ))
         self.assertTrue(any(
-            "독립적인 실행 역할" in warning
+            "자동 분리" in warning
             for warning in outcome.result["warnings"]
         ))
 
@@ -196,7 +208,7 @@ class PlanningWbsServiceTest(unittest.TestCase):
                     for warning in outcome.result["warnings"]
                 ))
 
-    def test_new_independent_roles_left_on_leaf_task_add_warning(self):
+    def test_new_independent_roles_are_split(self):
         for required_skills in (
             ["BACKEND_DEVELOPMENT", "MOBILE_DEVELOPMENT"],
             ["DATA_ENGINEERING", "FRONTEND_DEVELOPMENT"],
@@ -206,10 +218,38 @@ class PlanningWbsServiceTest(unittest.TestCase):
                     self.request,
                     [plan_with_task(required_skills=required_skills)],
                 )
-                self.assertTrue(any(
-                    "독립적인 실행 역할" in warning
-                    for warning in outcome.result["warnings"]
+                leaf_tasks = [
+                    item for item in outcome.result["wbs_items"]
+                    if item["item_type"] == "TASK"
+                ]
+                self.assertEqual(len(leaf_tasks), 2)
+                self.assertTrue(all(
+                    len(item["required_skills"]) == 1
+                    for item in leaf_tasks
                 ))
+
+    def test_supporting_role_follows_related_execution_role_after_split(self):
+        outcome = self.service.finalize(
+            self.request,
+            [plan_with_task(required_skills=[
+                "BACKEND_DEVELOPMENT",
+                "FRONTEND_DEVELOPMENT",
+                "SECURITY",
+                "ACCESSIBILITY",
+            ])],
+        )
+        leaf_tasks = [
+            item for item in outcome.result["wbs_items"]
+            if item["item_type"] == "TASK"
+        ]
+
+        self.assertEqual(
+            [item["required_skills"] for item in leaf_tasks],
+            [
+                ["BACKEND_DEVELOPMENT", "SECURITY"],
+                ["FRONTEND_DEVELOPMENT", "ACCESSIBILITY"],
+            ],
+        )
 
     def test_backend_and_frontend_tasks_remain_separate_and_keep_requirements(self):
         plan = plan_with_task(

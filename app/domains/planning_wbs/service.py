@@ -15,6 +15,25 @@ INDEPENDENT_ROLE_PAIRS = {
     frozenset(("BACKEND_DEVELOPMENT", "TESTING")),
     frozenset(("FRONTEND_DEVELOPMENT", "TESTING")),
 }
+EXECUTION_ROLES = {
+    "BACKEND_DEVELOPMENT",
+    "FRONTEND_DEVELOPMENT",
+    "MOBILE_DEVELOPMENT",
+    "DATA_ENGINEERING",
+    "TESTING",
+}
+SUPPORTING_ROLE_OWNER = {
+    "SECURITY": "BACKEND_DEVELOPMENT",
+    "DATABASE": "DATA_ENGINEERING",
+    "ACCESSIBILITY": "FRONTEND_DEVELOPMENT",
+}
+ROLE_LABELS = {
+    "BACKEND_DEVELOPMENT": "백엔드",
+    "FRONTEND_DEVELOPMENT": "프론트엔드",
+    "MOBILE_DEVELOPMENT": "모바일",
+    "DATA_ENGINEERING": "데이터",
+    "TESTING": "테스트",
+}
 
 
 @dataclass(frozen=True)
@@ -278,7 +297,14 @@ class PlanningWBSService:
             })
 
             for package_index, package in enumerate(packages, start=1):
-                tasks = list(package["tasks"].values())
+                tasks = []
+                for task in package["tasks"].values():
+                    split_tasks = self._split_independent_task(task)
+                    if len(split_tasks) > 1:
+                        warnings.append(
+                            f"{task['name']} TASK가 독립 실행 역할별로 자동 분리되었습니다."
+                        )
+                    tasks.extend(split_tasks)
                 package_requirement_ids = self._ordered_requirements(
                     self._task_values([package], "mapped_requirement_ids"),
                     requirement_order,
@@ -316,11 +342,6 @@ class PlanningWBSService:
                     mapped_leaf_requirements.update(requirement_ids)
                     mapped_leaf_artifacts.update(artifact_types)
                     required_skills = task["required_skills"]
-                    if self._has_independent_roles(required_skills):
-                        warnings.append(
-                            f"{task['name']} TASK에 서로 독립적인 실행 역할이 함께 남아 있습니다: "
-                            + ", ".join(required_skills)
-                        )
                     items.append({
                         "wbs_id": next_wbs_id(),
                         "wbs_code": f"{phase_index}.{package_index}.{task_index}",
@@ -393,6 +414,42 @@ class PlanningWBSService:
     def _has_independent_roles(self, required_skills: list[str]) -> bool:
         skill_set = set(required_skills)
         return any(pair <= skill_set for pair in INDEPENDENT_ROLE_PAIRS)
+
+    def _split_independent_task(self, task: dict[str, Any]) -> list[dict[str, Any]]:
+        required_skills = task["required_skills"]
+        if not self._has_independent_roles(required_skills):
+            return [task]
+
+        execution_roles = [
+            skill for skill in required_skills if skill in EXECUTION_ROLES
+        ]
+        if len(execution_roles) < 2:
+            return [task]
+
+        supporting_roles = [
+            skill for skill in required_skills if skill not in EXECUTION_ROLES
+        ]
+        result = []
+        for index, execution_role in enumerate(execution_roles):
+            label = ROLE_LABELS[execution_role]
+            skills = [execution_role]
+            for supporting_role in supporting_roles:
+                preferred_owner = SUPPORTING_ROLE_OWNER.get(supporting_role)
+                if preferred_owner == execution_role or (
+                    preferred_owner not in execution_roles and index == 0
+                ):
+                    skills.append(supporting_role)
+            result.append({
+                **task,
+                "name": f"{task['name']} - {label} 작업",
+                "description": f"{label} 담당 범위: {task['description']}",
+                "completion_criteria": [
+                    f"{label} 범위: {criterion}"
+                    for criterion in task["completion_criteria"]
+                ],
+                "required_skills": skills,
+            })
+        return result
 
     def _task_values(self, packages: list[dict[str, Any]], field: str) -> list[Any]:
         values = []
