@@ -134,6 +134,7 @@ class FakeWbsLlm:
                                         completion_criteria=[
                                             "All requirements are mapped"
                                         ],
+                                        required_skills=["REQUIREMENTS_ANALYSIS"],
                                     )
                                 ],
                             )

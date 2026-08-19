@@ -110,6 +110,13 @@ class PlanningWbsLlmServiceTest(unittest.TestCase):
         for phrase in ("일정", "담당자", "requirement_id", "phase_name"):
             self.assertIn(phrase, instructions)
 
+    def test_instructions_require_independent_role_task_split(self):
+        instructions = self.service._instructions()
+
+        self.assertIn("담당자 한 명", instructions)
+        self.assertIn("역할별 TASK로 분리", instructions)
+        self.assertIn("required_skills", instructions)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,13 +69,19 @@ def sample_request(methodology=None, requirement_count=2) -> WBSGenerationReques
     })
 
 
-def task(name, requirement_ids, artifact_types):
+def task(
+    name,
+    requirement_ids,
+    artifact_types,
+    required_skills=None,
+):
     return GeneratedWBSTask(
         name=name,
         description=f"{name}을 수행한다.",
         mapped_requirement_ids=requirement_ids,
         related_artifact_types=artifact_types,
         completion_criteria=[f"{name} 완료"],
+        required_skills=required_skills or ["REQUIREMENTS_ANALYSIS"],
     )
 
 

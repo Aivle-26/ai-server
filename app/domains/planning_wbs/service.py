@@ -8,6 +8,13 @@ from .schemas import WBSGenerationRequest
 
 
 WBS_REQUIREMENT_BATCH_SIZE = 30
+INDEPENDENT_ROLE_PAIRS = {
+    frozenset(("BACKEND_DEVELOPMENT", "FRONTEND_DEVELOPMENT")),
+    frozenset(("BACKEND_DEVELOPMENT", "MOBILE_DEVELOPMENT")),
+    frozenset(("DATA_ENGINEERING", "FRONTEND_DEVELOPMENT")),
+    frozenset(("BACKEND_DEVELOPMENT", "TESTING")),
+    frozenset(("FRONTEND_DEVELOPMENT", "TESTING")),
+}
 
 
 @dataclass(frozen=True)
@@ -171,6 +178,7 @@ class PlanningWBSService:
                             "mapped_requirement_ids": [],
                             "related_artifact_types": [],
                             "completion_criteria": [],
+                            "required_skills": [],
                         })
 
                         proposed_requirement_ids = self._clean_ids(
@@ -215,6 +223,10 @@ class PlanningWBSService:
                         task_bucket["completion_criteria"] = self._merge_strings(
                             task_bucket["completion_criteria"],
                             task.get("completion_criteria") or [],
+                        )
+                        task_bucket["required_skills"] = self._merge_strings(
+                            task_bucket["required_skills"],
+                            task.get("required_skills") or [],
                         )
 
         items = []
@@ -262,6 +274,7 @@ class PlanningWBSService:
                 ),
                 "completion_criteria": phase_bucket["completion_criteria"]
                 or [f"{stage} 단계 작업 완료"],
+                "required_skills": [],
             })
 
             for package_index, package in enumerate(packages, start=1):
@@ -290,6 +303,7 @@ class PlanningWBSService:
                     ),
                     "completion_criteria": package["completion_criteria"]
                     or [f"{package['name']} 작업 완료"],
+                    "required_skills": [],
                 })
 
                 for task_index, task in enumerate(tasks, start=1):
@@ -301,6 +315,12 @@ class PlanningWBSService:
                     )
                     mapped_leaf_requirements.update(requirement_ids)
                     mapped_leaf_artifacts.update(artifact_types)
+                    required_skills = task["required_skills"]
+                    if self._has_independent_roles(required_skills):
+                        warnings.append(
+                            f"{task['name']} TASK에 서로 독립적인 실행 역할이 함께 남아 있습니다: "
+                            + ", ".join(required_skills)
+                        )
                     items.append({
                         "wbs_id": next_wbs_id(),
                         "wbs_code": f"{phase_index}.{package_index}.{task_index}",
@@ -315,6 +335,7 @@ class PlanningWBSService:
                             artifact_types, artifact_by_type
                         ),
                         "completion_criteria": task["completion_criteria"],
+                        "required_skills": required_skills,
                     })
 
         missing_requirement_ids = [
@@ -368,6 +389,10 @@ class PlanningWBSService:
             missing_artifact_types=missing_artifact_types,
             missing_phase_names=missing_phase_names,
         )
+
+    def _has_independent_roles(self, required_skills: list[str]) -> bool:
+        skill_set = set(required_skills)
+        return any(pair <= skill_set for pair in INDEPENDENT_ROLE_PAIRS)
 
     def _task_values(self, packages: list[dict[str, Any]], field: str) -> list[Any]:
         values = []

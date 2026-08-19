@@ -15,6 +15,11 @@ from app.core.api_types import LLMStatus, WbsId
 DEFAULT_METHODOLOGY = ["요구사항 분석", "설계", "개발", "테스트", "검수"]
 WBSItemType = Literal["PHASE", "WORK_PACKAGE", "TASK"]
 WBSGenerationStatus = Literal["SUCCEEDED", "PARTIAL"]
+WBSRequiredSkill = Literal[
+    "DOCUMENT_ANALYSIS", "REQUIREMENTS_ANALYSIS", "ARCHITECTURE_DESIGN",
+    "BACKEND_DEVELOPMENT", "FRONTEND_DEVELOPMENT", "MOBILE_DEVELOPMENT",
+    "DATA_ENGINEERING", "SECURITY", "DATABASE", "ACCESSIBILITY", "TESTING", "DEVOPS",
+]
 
 
 class WBSGenerationRequest(BaseModel):
@@ -57,6 +62,7 @@ class WBSItem(BaseModel):
     mapped_requirement_ids: list[int] = Field(default_factory=list)
     related_artifacts: list[RequiredArtifact] = Field(default_factory=list)
     completion_criteria: list[str] = Field(default_factory=list)
+    required_skills: list[WBSRequiredSkill] = Field(default_factory=list)
 
 
 class RequirementCoverage(BaseModel):
