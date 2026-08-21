@@ -24,6 +24,8 @@ Spring Boot Backend ── multipart/form-data · JSON ──▶ FastAPI Router
                        문서 해석 · 생성 · 판단                    검증 · 계산 · 근거 연결 · Fallback
 ```
 
+서비스 관점에서는 `Planning`(문서·요구사항·WBS·일정·인력·비용·산출물), `Report`(회의·위클리 스크럼·최종 보고·RAG), `Risk`(변경 영향·커뮤니케이션·지연·보안·상태) 흐름으로 묶입니다. 아래 표와 실제 API는 이 구분을 구현 단위로 세분화합니다.
+
 ## AI Features
 
 | 영역 | 입력 | 처리 | 주요 반환값 |
@@ -32,12 +34,12 @@ Spring Boot Backend ── multipart/form-data · JSON ──▶ FastAPI Router
 | Evidence & Readjustment | 문서와 기존 요구사항 | 문서·페이지·청크·인용문 근거 연결, 추가 문서와 기존 요구사항 비교 | 요구사항 근거, 추가·수정·삭제 후보, `PENDING_REVIEW` 상태 |
 | WBS Generation | 확정 전 요구사항, 방법론, 필수 산출물 | `PHASE → WORK_PACKAGE → TASK` 생성, 누락 요구사항·산출물 재생성 | 계층형 WBS, 요구사항/산출물 커버리지, 경고 |
 | Schedule Recommendation | WBS TASK와 프로젝트 기간 | LLM의 3점 기간·선행관계 추정 후 Monte Carlo 5,000회 계산 | 예상(P50)·권장(P80)·보수적(P90) 일정 |
-| Resource Planning | WBS 일정, 역할·기술·숙련도·가용시간 | 역할·공수 추정과 서버 규칙 기반 담당자 추천 | TASK별 인일/MM, 필요 인력, 추천 담당자와 점수 근거 |
+| Resource Planning | WBS 일정, 역할·기술·숙련도·경력·가용시간 | 역할·공수 추정과 서버 규칙 기반 담당자 추천 | TASK별 인일/MM, 필요 인력, 추천 담당자와 점수 근거 |
 | Organization Chart | 인력 계획과 실제 프로젝트 멤버 | 검증된 조직 View 구성과 Pillow 렌더링 | 조직 구조 JSON, Base64 JPG, 크기 정보 |
 | Cost & Effort | WBS별 MM, 단가·운영 조건 | 추가 비용 후보 분석, KOSA 직무·공수 추정, 서버 계산 | 권장 견적, 비용 상세, 직무별 인일/MM |
 | Artifact Support | 요구사항, 조직/화면 정보, 등록 산출물 | UI Mockup 필요성 판단·JPG 생성, 산출물 보안/등록 상태 점검 | Base64 JPG, 탐지 결과, 누락·승인 상태 |
 | Risk Analysis | 요구사항 변경, 일정/WBS, 팀원, 메시지 | 변경 영향, 재배정, 지연, 신호등, 커뮤니케이션 리스크 분석 | 위험 등급, 영향 TASK, 근거 메시지, 권고 조치 |
-| Report Agent | 회의록, WBS, 리스크, 주간 스크럼, 산출물 본문 | 사실 기반 초안 생성, 기준문서 검토, PM 승인 결과 반영, 근거 검색 | 회의/주간/최종 보고서, 다음 업무, RAG 답변과 출처 |
+| Report Agent | 회의록, WBS, 리스크, 주간 스크럼, 산출물 본문 | 사실 기반 초안 생성, 기준문서 검토, 차주 업무 추천, PM 승인·수정·거절 반영, 근거 검색 | 회의/주간/최종 보고서, 다음 업무, RAG 답변과 출처 |
 
 문서 분석은 `.pdf`, `.hwp`, `.hwpx`, `.docx`, `.txt`, `.md`, `.csv`를 지원합니다. 텍스트가 없는 PDF는 Vision 분석 대상으로 분리합니다.
 
