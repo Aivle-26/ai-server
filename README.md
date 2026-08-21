@@ -43,32 +43,6 @@ Spring Boot Backend ── multipart/form-data · JSON ──▶ FastAPI Router
 
 문서 분석은 `.pdf`, `.hwp`, `.hwpx`, `.docx`, `.txt`, `.md`, `.csv`를 지원합니다. 텍스트가 없는 PDF는 Vision 분석 대상으로 분리합니다.
 
-## Agent Architecture
-
-`app/domains`는 기능별 Router, Schema, Graph, LLM Service, 결정론적 Service를 함께 관리합니다. 모든 도메인이 같은 방식으로 동작하는 것은 아닙니다.
-
-| Domain | Orchestration | 핵심 흐름 |
-| --- | --- | --- |
-| `planning_documents` | LangGraph `StateGraph` | parse → split → 분석 입력 선택 → LLM/fallback 추출 → 근거 병합 → 응답 |
-| `planning_wbs` | LangGraph `StateGraph` + 조건 분기 | 컨텍스트 분할 → WBS 생성 → 커버리지 검사 → 누락 항목 보완 → 응답 |
-| `planning_schedule` | LangGraph `StateGraph` | 기간·선행관계 추정 → 유효 관계 검사 → Monte Carlo 일정 계산 |
-| `planning_resources` | LangGraph `StateGraph` | 역할·기술·인일 추정 → 가용시간과 숙련도 기반 배정 → 조직 View/이미지 생성 |
-| `planning_costs` | LangGraph `StateGraph` | 추가 비용 후보 분석 → 입력 단가와 정책을 사용한 견적 계산 |
-| `communication_risk` | LangGraph `StateGraph` | 메시지 지표 계산 → 선택적 LLM 판단 → 규칙 fallback → 근거 제한 응답 |
-| `reporting` | `ReportGraph` facade + `ReportService` | 규칙 기반 사실 구조를 먼저 만들고 LLM이 요약·표현을 보강; PM 승인/거절을 최종 반영 |
-| `project_risk` | Router + Agent/Service | 영향도 외에는 입력 데이터에 대한 규칙 기반 보안·지연·상태·신호등 분석 중심 |
-
-`ReportGraph`는 도메인 진입점을 통일하는 facade이며 LangGraph의 `StateGraph`는 아닙니다. 이름만으로 모든 흐름을 LangGraph Agent라고 설명하지 않고, 실제 orchestration 경계를 구분했습니다.
-
-## AI Processing Flow
-
-1. Backend가 문서는 `multipart/form-data`, 나머지 분석 컨텍스트는 JSON으로 전달합니다.
-2. FastAPI와 Pydantic이 ID, enum, 날짜, 계층 관계, 중복과 범위를 검증합니다.
-3. Domain Graph가 LLM 작업과 결정론적 작업을 순서대로 실행합니다.
-4. OpenAI `responses.parse` 또는 `ChatOpenAI.with_structured_output`이 Pydantic 모델에 맞는 결과를 생성합니다.
-5. 서버 로직이 실제 입력 ID만 허용하고, WBS 커버리지·선행관계·금액·일정·담당자 점수를 다시 계산합니다.
-6. 결과와 `llm_status`를 Backend에 반환하며, Backend가 프로젝트 데이터로 저장하고 Frontend에 제공합니다.
-
 ## Demo
 
 ### 요구사항 분석
@@ -102,6 +76,32 @@ Backend가 전달한 프로젝트 메시지를 근거로 위험 신호를 분석
 <p align="center">
   <img src="docs/demo/evidence-qa.gif" width="840" alt="프로젝트 문서와 산출물 근거 기반 질의응답" />
 </p>
+
+## Agent Architecture
+
+`app/domains`는 기능별 Router, Schema, Graph, LLM Service, 결정론적 Service를 함께 관리합니다. 모든 도메인이 같은 방식으로 동작하는 것은 아닙니다.
+
+| Domain | Orchestration | 핵심 흐름 |
+| --- | --- | --- |
+| `planning_documents` | LangGraph `StateGraph` | parse → split → 분석 입력 선택 → LLM/fallback 추출 → 근거 병합 → 응답 |
+| `planning_wbs` | LangGraph `StateGraph` + 조건 분기 | 컨텍스트 분할 → WBS 생성 → 커버리지 검사 → 누락 항목 보완 → 응답 |
+| `planning_schedule` | LangGraph `StateGraph` | 기간·선행관계 추정 → 유효 관계 검사 → Monte Carlo 일정 계산 |
+| `planning_resources` | LangGraph `StateGraph` | 역할·기술·인일 추정 → 가용시간과 숙련도 기반 배정 → 조직 View/이미지 생성 |
+| `planning_costs` | LangGraph `StateGraph` | 추가 비용 후보 분석 → 입력 단가와 정책을 사용한 견적 계산 |
+| `communication_risk` | LangGraph `StateGraph` | 메시지 지표 계산 → 선택적 LLM 판단 → 규칙 fallback → 근거 제한 응답 |
+| `reporting` | `ReportGraph` facade + `ReportService` | 규칙 기반 사실 구조를 먼저 만들고 LLM이 요약·표현을 보강; PM 승인/거절을 최종 반영 |
+| `project_risk` | Router + Agent/Service | 영향도 외에는 입력 데이터에 대한 규칙 기반 보안·지연·상태·신호등 분석 중심 |
+
+`ReportGraph`는 도메인 진입점을 통일하는 facade이며 LangGraph의 `StateGraph`는 아닙니다. 이름만으로 모든 흐름을 LangGraph Agent라고 설명하지 않고, 실제 orchestration 경계를 구분했습니다.
+
+## AI Processing Flow
+
+1. Backend가 문서는 `multipart/form-data`, 나머지 분석 컨텍스트는 JSON으로 전달합니다.
+2. FastAPI와 Pydantic이 ID, enum, 날짜, 계층 관계, 중복과 범위를 검증합니다.
+3. Domain Graph가 LLM 작업과 결정론적 작업을 순서대로 실행합니다.
+4. OpenAI `responses.parse` 또는 `ChatOpenAI.with_structured_output`이 Pydantic 모델에 맞는 결과를 생성합니다.
+5. 서버 로직이 실제 입력 ID만 허용하고, WBS 커버리지·선행관계·금액·일정·담당자 점수를 다시 계산합니다.
+6. 결과와 `llm_status`를 Backend에 반환하며, Backend가 프로젝트 데이터로 저장하고 Frontend에 제공합니다.
 
 ## Backend API Contract
 
@@ -242,8 +242,6 @@ main Push → Test → Source Archive → SCP to EC2 → deploy.sh
 - [PMate Backend](https://github.com/Aivle-26/backend-repo)
 - [Aivle-26 Organization](https://github.com/Aivle-26)
 - [PMate Service](https://aipm26.dev)
-
-팀 구성과 역할은 [Aivle-26 Organization](https://github.com/Aivle-26)에서 확인할 수 있습니다.
 
 ## License
 
